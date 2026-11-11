@@ -1,0 +1,12 @@
+md5: 67555ead611a5a436c2e9491f3b92115
+frozen: true
+deps:
+- path: data/processed/news.parquet
+  repo:
+    url: https://github.com/FinMLOps/finmlops-data-pipeline
+    rev_lock: 399df0baf5ad2aed16c51b0595592acd7a61f7c5
+outs:
+- md5: 93feeb318319b86d47ab1cbb786ffc3c
+  size: 6834773
+  hash: md5
+  path: news.parquet
