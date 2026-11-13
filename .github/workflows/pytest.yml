@@ -1,0 +1,59 @@
+name: pytest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:  # train.yml runs the tests first
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run pytest
+        run: uv run pytest
+
+      - name: Send failure notification email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "CI Failed: ${{ github.repository }} (${{ github.head_ref || github.ref_name }})"
+          to: ${{ secrets.RECIPIENTS }}
+          from: "GitHub Actions <${{ secrets.GMAIL_USERNAME }}>"
+          body: |
+            Hi guys,
+
+            The tests have failed for ${{ github.repository }}!
+
+            Details:
+            - Branch: ${{ github.head_ref || github.ref_name }}
+            - Pull request: ${{ github.event.pull_request.title || 'none (push to main)' }} ${{ github.event.pull_request.html_url }}
+            - Commit: ${{ github.event.pull_request.head.sha || github.sha }}
+            - Triggered by: ${{ github.actor }}
+
+            Check the run logs here:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
