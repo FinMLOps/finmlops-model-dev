@@ -12,23 +12,31 @@ dependencies = [
     "pyarrow>=26.0.1",
     "pyyaml>=6.0.3",
     "shap>=0.54.1",
-    "torch>=2.15.0",
     "transformers>=5.22.2",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=9.2.0",
-]
+# PyTorch comes in two builds; install exactly one:
+#   uv sync --extra gpu   machines with an NVIDIA GPU (the normal build, includes CUDA)
+#   uv sync --extra cpu   no GPU, and CI: about 2 GB smaller, same results, just slower
+[project.optional-dependencies]
+cpu = ["torch>=2.15.0"]
+gpu = ["torch>=2.15.0"]
 
-# CPU-only PyTorch: we have no GPU, and the default wheel pulls ~2 GB of CUDA libraries into CI and Docker
+[tool.uv]
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]
+
 [tool.uv.sources]
-torch = { index = "pytorch-cpu" }
+torch = [{ index = "pytorch-cpu", extra = "cpu" }]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
