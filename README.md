@@ -65,15 +65,15 @@ If it loses, the champion simply stays, so there's nothing to roll back. On the 
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/getting-started/installation/) and access to our DVC bucket (see [Getting the data](#getting-the-data)).
+You need access to our DVC bucket (see [Getting the data](#getting-the-data)).
 
-**1. Clone the repo and install everything:**
+**1. Clone the repo and install everything** (run only one of the two `uv sync` lines):
 
 ```bash
 git clone https://github.com/FinMLOps/finmlops-model-dev.git
 cd finmlops-model-dev
-uv sync --extra gpu     # with an NVIDIA GPU
-uv sync --extra cpu     # without one
+uv sync --extra gpu     # Windows/Linux with an NVIDIA GPU
+uv sync --extra cpu     # everything else, including Macs (Apple GPU still used)
 ```
 
 **2. Get the data:**
@@ -99,7 +99,7 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 Then open http://localhost:5000.
 
 > [!WARNING]
-> Train on a machine with an NVIDIA GPU. Without one it still works, just much slower (the Optuna search can take hours). The first run also downloads FinBERT (about 440 MB).
+> Train on a machine with a GPU (cuda or mps). Without one it still works, just much slower (the Optuna search can take hours). The first run also downloads FinBERT (about 440 MB).
 
 > [!IMPORTANT]
 > Always run the scripts from the repo folder with `python -m scripts.<name>`. Running `python data.py` from inside `scripts/` fails with `No module named 'scripts'`.
@@ -190,7 +190,7 @@ finmlops-model-dev/
 │   ├── registry.py           # MLflow model registry + GCS push
 │   ├── analysis.py           # charts and sensitivity analysis
 │   └── pipeline.py           # the whole flow in one command, with email alerts
-├── tests/                    # one test file per script
+├── tests/                    # offline tests for the scripts' logic
 ├── pyproject.toml
 └── uv.lock
 ```
