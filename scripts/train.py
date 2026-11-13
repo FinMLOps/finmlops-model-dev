@@ -6,12 +6,14 @@ uv run python -m scripts.train tune       # Optuna search
 """
 
 import sys
+import warnings
 
 import mlflow
 import optuna
 import torch
 import torch.nn.functional as F
 from peft import LoraConfig, TaskType, get_peft_model
+from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from scripts import benchmark, registry
@@ -73,16 +75,19 @@ def fit(model, tokenizer, df, p):
     for epoch in range(p["epochs"]):
         losses = []
         order = torch.randperm(len(texts)).tolist()
-        for i in range(0, len(order), p["batch_size"]):
-            idx = order[i : i + p["batch_size"]]
-            batch = tokenizer([texts[j] for j in idx], padding=True, truncation=True,
-                              max_length=MAX_LENGTH, return_tensors="pt").to(DEVICE)
-            logits = model(**batch).logits
-            loss = F.cross_entropy(logits, labels[idx].to(DEVICE), weight=weight)
-            loss.backward()
-            opt.step()
-            opt.zero_grad()
-            losses.append(loss.item())
+        batches = range(0, len(order), p["batch_size"])
+        with tqdm(batches, desc=f"epoch {epoch + 1}/{p['epochs']}", unit="batch") as bar:
+            for i in bar:
+                idx = order[i : i + p["batch_size"]]
+                batch = tokenizer([texts[j] for j in idx], padding=True, truncation=True,
+                                  max_length=MAX_LENGTH, return_tensors="pt").to(DEVICE)
+                logits = model(**batch).logits
+                loss = F.cross_entropy(logits, labels[idx].to(DEVICE), weight=weight)
+                loss.backward()
+                opt.step()
+                opt.zero_grad()
+                losses.append(loss.item())
+                bar.set_postfix(loss=f"{loss.item():.4f}")
         mlflow.log_metric("train_loss", sum(losses) / len(losses), step=epoch)
     return model
 
