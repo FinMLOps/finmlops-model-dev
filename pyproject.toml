@@ -1,0 +1,35 @@
+[project]
+name = "finmlops-model-dev"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dvc[gs]>=3.67.1",
+    "google-cloud-storage>=3.17.1",
+    "mlflow>=3.18.0",
+    "optuna>=5.0.0",
+    "pandas<3",
+    "peft>=0.21.2",
+    "pyarrow>=26.0.1",
+    "pyyaml>=6.0.3",
+    "shap>=0.54.1",
+    "torch>=2.15.0",
+    "transformers>=5.22.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+# CPU-only PyTorch: we have no GPU, and the default wheel pulls ~2 GB of CUDA libraries into CI and Docker
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
