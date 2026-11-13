@@ -38,9 +38,9 @@ flowchart LR
 
 **Data** ([`scripts/data.py`](scripts/data.py)) loads `news.parquet` and checks it has the columns and tickers we expect. Marketaux gives each article a sentiment score for each ticker (-1 to 1), and we turn that into a label: above +0.15 is positive, below -0.15 is negative, anything in between is neutral. The score is then dropped so the model can't cheat by reading it. We split by date, not randomly, because news about the same event comes out in bursts and a random split would put near-copies of the same story in both train and test. So the model trains on older news and is tested on newer news, which is also how it would be used for real.
 
-**Benchmark** ([`scripts/benchmark.py`](scripts/benchmark.py)) freezes the test set: Marketaux news from 6 Nov up to 12 Nov 2026. It's saved once as `data/benchmark_<snapshot>.parquet` and never rebuilt, so every model is compared on exactly the same rows, even after we pull newer data. Pretrained FinBERT scores it first, and that score is the baseline to beat. It also shows how much the results move if the ±0.15 cut-off were 0.10 or 0.25, and how often Marketaux agrees with our own hand labels.
+**Benchmark** ([`scripts/benchmark.py`](scripts/benchmark.py)) freezes the test set: Marketaux news from 6 Nov up to 12 Nov 2026. The rows are saved once as `data/benchmark_20261106_20261112.parquet` and never rebuilt, so every model is compared on exactly the same articles, even after we pull newer data. Only the rows are frozen: the labels are made again from the stored Marketaux score every time, so they always follow the current cut-off. Pretrained FinBERT scores it first, and that score is the baseline to beat. It also shows how much the results move if the ±0.15 cut-off were 0.10 or 0.25, and how often Marketaux agrees with our own hand labels.
 
-**Training** ([`scripts/train.py`](scripts/train.py)) fine-tunes FinBERT with [LoRA](https://huggingface.co/docs/peft), which only trains small adapter layers instead of the whole model, so it's fast and fits in the memory of an ordinary GPU. Most of our labels are positive, so the loss gives the rarer negative and neutral rows more weight, otherwise the model would learn to just say "positive". An [Optuna](https://optuna.org) search tries different learning rates, LoRA sizes, dropout and epochs, scored on the validation set only (never the test set).
+**Training** ([`scripts/train.py`](scripts/train.py)) fine-tunes FinBERT with [LoRA](https://huggingface.co/docs/peft), which only trains small adapter layers instead of the whole model, so it's fast and fits in the memory of an ordinary GPU. Most of our labels are positive, so the loss gives the rarer negative and neutral rows more weight, otherwise the model would learn to just say "positive". Training also uses a learning-rate warmup, gradient clipping and weight decay, and keeps the epoch that scored best on the validation set. An [Optuna](https://optuna.org) search tries different learning rates, LoRA sizes, dropout and epochs, scored on the validation set only (never the test set).
 
 **Evaluation** ([`scripts/evaluate.py`](scripts/evaluate.py)) reports macro F1 (our main metric, since it treats the three classes equally), precision, recall, accuracy, and accuracy for each ticker.
 
@@ -99,7 +99,10 @@ uv run mlflow ui --backend-store-uri sqlite:///mlflow.db
 Then open http://localhost:5000.
 
 > [!WARNING]
-> Train on a machine with a GPU (cuda or mps). Without one it still works, just much slower (the Optuna search can take hours). The first run also downloads FinBERT (about 440 MB).
+> Train on a machine with a GPU (an NVIDIA one, or an Apple Silicon Mac). Without one it still works, just much slower (the Optuna search can take hours). The first run also downloads FinBERT (about 440 MB).
+
+> [!NOTE]
+> The scripts pick the hardware themselves: an NVIDIA GPU first (training in mixed precision, bf16 or fp16 depending on the card), then an Apple Silicon GPU, then the CPU. To force one, put `TORCH_DEVICE=cpu` (or `mps`, `cuda`) in `.env`. Which hardware a run used is logged in MLflow with the run.
 
 > [!IMPORTANT]
 > Always run the scripts from the repo folder with `python -m scripts.<name>`. Running `python data.py` from inside `scripts/` fails with `No module named 'scripts'`.
@@ -109,7 +112,7 @@ Then open http://localhost:5000.
 ```bash
 uv run python -m scripts.train baseline      # score + register pretrained FinBERT
 uv run python -m scripts.train               # one LoRA run with the default settings
-uv run python -m scripts.train tune          # only the Optuna search
+uv run python -m scripts.train tune          # only the Optuna search (add a number for more trials: tune 20)
 uv run python -m scripts.analysis            # SHAP, title vs summary, hyperparameter importance
 uv run python -m scripts.data sample-gold    # rows for hand-labeling (see below)
 uv run python -m scripts.benchmark           # how often Marketaux agrees with our hand labels
@@ -139,12 +142,12 @@ Marketaux's scores are automatic, so we don't fully trust them. Before we rely o
 uv run python -m scripts.data sample-gold
 ```
 
-This writes `data/gold_todo.csv`: 100 Finnhub headlines per ticker (Finnhub rows are never trained on) plus up to 15 Marketaux headlines per ticker from the benchmark window. The source and Marketaux's score are left out, so they can't sway whoever labels. For each row fill in:
+This writes `data/gold_todo.csv` (it won't overwrite one that's already there, since it may hold your labels; add `--force` if you really want a fresh one): 100 Finnhub headlines per ticker (Finnhub rows are never trained on) plus up to 15 Marketaux headlines per ticker from the benchmark window. The source and Marketaux's score are left out, so they can't sway whoever labels. For each row fill in:
 
 - `label`: `negative`, `neutral` or `positive`
 - `mixed_signal`: `1` if the headline pulls both ways (like "revenue grew but missed estimates"), otherwise leave it empty
 
-Save it as `data/gold.csv`. From then on the gold set decides promotion instead of the benchmark, mixed-signal headlines get their own accuracy, and `uv run python -m scripts.benchmark` shows how often Marketaux agrees with us.
+Save it as `data/gold.csv`. Small slips like `Positive ` or `yes` are fine, but every row needs a label. Gold rows are never used for training. From then on the gold set decides promotion instead of the benchmark, mixed-signal headlines get their own accuracy, and `uv run python -m scripts.benchmark` shows how often Marketaux agrees with us.
 
 ## Email alerts
 
@@ -180,10 +183,12 @@ finmlops-model-dev/
 │   └── claude.yml            # Claude PR review assistant
 ├── data/
 │   ├── news.parquet.dvc      # pins the data pipeline snapshot we use (in git)
-│   └── news.parquet          # the data itself (from DVC, not in git)
+│   ├── news.parquet          # the data itself (from DVC, not in git)
+│   └── benchmark_20261106_20261112.parquet   # the frozen test set (made on the first run)
 ├── scripts/
 │   ├── config.py             # every setting in one place
 │   ├── data.py               # loading, labels, date split, gold set
+│   ├── hardware.py           # picks NVIDIA GPU / Apple Silicon / CPU and mixed precision
 │   ├── benchmark.py          # frozen test set + pretrained FinBERT baseline
 │   ├── train.py              # baseline, LoRA fine-tuning, Optuna search
 │   ├── evaluate.py           # predictions, metrics, the champion rule
