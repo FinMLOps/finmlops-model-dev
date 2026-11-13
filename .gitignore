@@ -4,3 +4,11 @@ __pycache__/
 .pytest_cache/
 .env
 !.env.example
+
+# made by running the pipeline (MLflow keeps the record of every run)
+outputs/
+mlruns/
+mlflow.db
+optuna.db
+data/gold_todo.csv
+data/*.tmp
