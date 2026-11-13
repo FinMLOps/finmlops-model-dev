@@ -9,28 +9,20 @@ Exit code 1 when the challenger fails validation, so CI marks the run as failed.
 
 import logging
 import os
+import shutil
 import smtplib
 import sys
-import warnings
+import traceback
 from email.message import EmailMessage
 
 import mlflow
-from dotenv import load_dotenv
-from transformers import logging as hf_logging
 
 from scripts import analysis, registry
-from scripts.config import MIN_F1
-from scripts.data import load_eval
+from scripts.benchmark import load_eval
+from scripts.config import MIN_F1, setup_logging
 from scripts.evaluate import evaluate_version, is_better
 from scripts.train import baseline, train, tune
 
-# Silence noisy third-party loggers and warnings (HTTP 404s, HF hub notices, MLflow env checks)
-warnings.filterwarnings("ignore")
-hf_logging.set_verbosity_error()
-for _name in ["httpx", "urllib3", "mlflow", "transformers", "huggingface_hub"]:
-    logging.getLogger(_name).setLevel(logging.ERROR)
-
-load_dotenv()
 log = logging.getLogger(__name__)
 
 
@@ -77,37 +69,38 @@ def run(do_tune=False):
         baseline()
         champion = registry.champion_version()
     params = tune() if do_tune else None
-    log.info("training the challenger with %s", params or "default params")
+    log.info("training the challenger with %s", params or "the default params")
     version = train(params)["version"]
     df = load_eval()
     new, new_df = evaluate_version(version, df)
     old, old_df = evaluate_version(champion, df)
+    status, message = decide(new, old, version, champion)
+
+    shutil.rmtree(analysis.PLOTS_DIR, ignore_errors=True)  # so only this run's charts get logged
     analysis.plot_confusion(new_df, "challenger")
     analysis.plot_confusion(old_df, "champion")
     analysis.plot_compare({f"champion v{champion}": old, f"challenger v{version}": new})
-
     with mlflow.start_run(run_name=f"select-v{version}"):
+        mlflow.set_tag("decision", status)
         mlflow.log_params({"challenger": version, "champion": champion})
         mlflow.log_metrics({f"challenger_{k}": v for k, v in new.items()})
         mlflow.log_metrics({f"champion_{k}": v for k, v in old.items()})
-        mlflow.log_artifacts(str(analysis.OUT_DIR / "plots"), "plots")
+        mlflow.log_artifacts(str(analysis.PLOTS_DIR), "plots")
 
-    status, message = decide(new, old, version, champion)
     if status == "promoted":
-        registry.promote(version)
+        # copy to GCS before moving the alias: if the upload fails, the old champion simply stays
         where = registry.push_to_gcs(version) if os.getenv("MODEL_BUCKET") else "not pushed (MODEL_BUCKET not set)"
+        registry.promote(version)
         message += f"\npushed to {where}"
     return status, message
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    for name in ["httpx", "urllib3", "mlflow", "transformers", "huggingface_hub"]:
-        logging.getLogger(name).setLevel(logging.ERROR)
+    setup_logging()
     try:
-        status, message = run(do_tune="--tune" in sys.argv)
-    except Exception as exc:
-        notify("pipeline crashed", repr(exc))
+        status, message = run(do_tune="--tune" in sys.argv[1:])
+    except Exception:
+        notify("pipeline crashed", traceback.format_exc())
         raise
     print(status, message, sep="\n")
     notify(status, message)
