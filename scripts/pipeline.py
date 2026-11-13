@@ -11,16 +11,24 @@ import logging
 import os
 import smtplib
 import sys
+import warnings
 from email.message import EmailMessage
 
 import mlflow
 from dotenv import load_dotenv
+from transformers import logging as hf_logging
 
 from scripts import analysis, registry
 from scripts.config import MIN_F1
 from scripts.data import load_eval
 from scripts.evaluate import evaluate_version, is_better
 from scripts.train import baseline, train, tune
+
+# Silence noisy third-party loggers and warnings (HTTP 404s, HF hub notices, MLflow env checks)
+warnings.filterwarnings("ignore")
+hf_logging.set_verbosity_error()
+for _name in ["httpx", "urllib3", "mlflow", "transformers", "huggingface_hub"]:
+    logging.getLogger(_name).setLevel(logging.ERROR)
 
 load_dotenv()
 log = logging.getLogger(__name__)
@@ -94,6 +102,8 @@ def run(do_tune=False):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    for name in ["httpx", "urllib3", "mlflow", "transformers", "huggingface_hub"]:
+        logging.getLogger(name).setLevel(logging.ERROR)
     try:
         status, message = run(do_tune="--tune" in sys.argv)
     except Exception as exc:
