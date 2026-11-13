@@ -31,3 +31,13 @@ def test_push_to_gcs_uploads_every_file(tmp_path, monkeypatch):
     assert where == "gs://my-bucket/models/finbert-sentiment/v3"
     uploaded = sorted(call.args[0] for call in bucket.blob.call_args_list)
     assert uploaded == ["models/finbert-sentiment/v3/config.json", "models/finbert-sentiment/v3/sub/weights.bin"]
+
+
+def test_device_prefers_cuda_then_mps(monkeypatch):
+    monkeypatch.setattr(registry.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(registry.torch.backends.mps, "is_available", lambda: True)
+    assert registry.device() == "mps"
+    monkeypatch.setattr(registry.torch.backends.mps, "is_available", lambda: False)
+    assert registry.device() == "cpu"
+    monkeypatch.setattr(registry.torch.cuda, "is_available", lambda: True)
+    assert registry.device() == "cuda"

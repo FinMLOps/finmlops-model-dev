@@ -19,7 +19,7 @@ from scripts.config import BASE, DEFAULTS, GOLD_PATH, MAX_LENGTH, SEED, STORAGE,
 from scripts.data import data_info, load_eval, load_gold, load_labeled, split_by_date
 from scripts.evaluate import metrics, predict
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = registry.device()
 
 
 def baseline():

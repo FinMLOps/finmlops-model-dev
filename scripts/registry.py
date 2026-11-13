@@ -13,6 +13,14 @@ from scripts.config import MLFLOW_URI
 from scripts.config import REGISTRY_NAME as NAME
 
 
+def device():
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def setup():
     mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", MLFLOW_URI))
     mlflow.set_experiment(NAME)
@@ -34,8 +42,7 @@ def load(version=None):
         raise RuntimeError("no champion registered yet; run `uv run python -m scripts.train baseline` first")
     uri = f"models:/{NAME}/{version}" if version else f"models:/{NAME}@champion"
     parts = mlflow.transformers.load_model(uri, return_type="components")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    return parts["model"].to(device), parts["tokenizer"]
+    return parts["model"].to(device()), parts["tokenizer"]
 
 
 def champion_version():
