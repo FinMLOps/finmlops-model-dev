@@ -32,6 +32,7 @@ def log_model(model, tokenizer):
         transformers_model={"model": model, "tokenizer": tokenizer},
         name="model",
         registered_model_name=NAME,
+        pip_requirements=["torch", "transformers", "peft"],
     )
     return info.registered_model_version
 
