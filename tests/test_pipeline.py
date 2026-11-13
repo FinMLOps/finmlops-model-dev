@@ -35,9 +35,10 @@ def test_notify_sends_and_never_raises(monkeypatch):
 
 
 @pytest.fixture
-def fake_run(monkeypatch):
+def fake_run(monkeypatch, tmp_path):
     """everything heavy in pipeline.run replaced by fakes; returns the promote mock"""
     promote = MagicMock()
+    monkeypatch.setattr(pipeline.analysis, "PLOTS_DIR", tmp_path / "plots")
     monkeypatch.setattr(pipeline.registry, "setup", lambda: None)
     monkeypatch.setattr(pipeline.registry, "promote", promote)
     monkeypatch.setattr(pipeline, "train", lambda params: {"version": "2"})
@@ -45,7 +46,6 @@ def fake_run(monkeypatch):
     monkeypatch.setattr(pipeline, "mlflow", MagicMock())
     for name in ["plot_confusion", "plot_compare"]:
         monkeypatch.setattr(pipeline.analysis, name, lambda *a: None)
-    monkeypatch.delenv("MODEL_BUCKET", raising=False)
     return promote
 
 
@@ -72,3 +72,33 @@ def test_run_keeps_champion_and_bootstraps_baseline(monkeypatch, fake_run):
     assert status == "kept champion"
     baseline.assert_called_once()
     fake_run.assert_not_called()
+
+
+def test_a_failed_upload_keeps_the_old_champion(monkeypatch, fake_run):
+    monkeypatch.setenv("MODEL_BUCKET", "my-bucket")
+    monkeypatch.setattr(pipeline.registry, "champion_version", lambda: "1")
+    monkeypatch.setattr(pipeline, "evaluate_version", scores({"1": OLD, "2": {"f1_macro": 0.8, "accuracy_AAPL": 0.9}}))
+    monkeypatch.setattr(pipeline.registry, "push_to_gcs", MagicMock(side_effect=OSError("bucket unreachable")))
+    with pytest.raises(OSError):
+        pipeline.run()
+    fake_run.assert_not_called()  # the alias never moved
+
+
+def test_main_emails_the_traceback_when_it_crashes(monkeypatch):
+    sent = MagicMock()
+    monkeypatch.setattr(pipeline, "notify", sent)
+    monkeypatch.setattr(pipeline, "run", MagicMock(side_effect=ValueError("bad data")))
+    monkeypatch.setattr(pipeline.sys, "argv", ["pipeline"])
+    with pytest.raises(ValueError):
+        pipeline.main()
+    subject, body = sent.call_args.args
+    assert subject == "pipeline crashed" and "Traceback" in body and "bad data" in body
+
+
+def test_main_exits_with_1_when_validation_fails(monkeypatch):
+    monkeypatch.setattr(pipeline, "notify", MagicMock())
+    monkeypatch.setattr(pipeline, "run", lambda do_tune: ("failed validation", "macro F1 below 0.6"))
+    monkeypatch.setattr(pipeline.sys, "argv", ["pipeline"])
+    with pytest.raises(SystemExit) as exit_info:
+        pipeline.main()
+    assert exit_info.value.code == 1

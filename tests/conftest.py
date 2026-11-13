@@ -5,6 +5,15 @@ import pytest
 
 ROW = {"id": "a", "source": "marketaux", "publisher": "p", "ticker": "AAPL", "title": "t", "summary": "s",
        "text": "t s", "published": "2026-11-01", "url": "u", "sentiment_score": 0.5}
+SETTINGS = ["MLFLOW_TRACKING_URI", "MODEL_BUCKET", "GMAIL_USERNAME", "GMAIL_APP_PASSWORD", "ALERT_RECIPIENTS"]
+
+
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch):
+    """tests never see a developer's .env settings (email, MLflow server, bucket) and always run on the CPU"""
+    for key in SETTINGS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("TORCH_DEVICE", "cpu")
 
 
 @pytest.fixture
