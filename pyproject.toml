@@ -1,17 +1,21 @@
 [project]
 name = "finmlops-model-dev"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "dvc[gs]>=3.67.1",
     "google-cloud-storage>=3.17.1",
+    "matplotlib>=3.9",
     "mlflow>=3.18.0",
     "optuna>=5.0.0",
     "pandas<3",
     "peft>=0.21.2",
     "pyarrow>=26.0.1",
+    "python-dotenv>=1.0",
     "pyyaml>=6.0.3",
+    "scikit-learn>=1.5",
     "shap>=0.54.1",
+    "tqdm>=4.66",
     "transformers>=5.22.2",
 ]
 
