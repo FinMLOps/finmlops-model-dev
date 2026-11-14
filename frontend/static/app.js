@@ -551,23 +551,21 @@ function renderDaily() {
   });
 }
 
-async function showNoData(msg) {
+function showNoData(msg) {
   $('#watchlist').innerHTML = '<li class="wl-empty">No data yet.</li>';
-  let health = null;
-  try { health = await (await fetch('/api/health')).json(); } catch (e) { /* older server: show the steps without ticks */ }
   const steps = [
-    [health?.champion, 'A champion model', health?.champion ? `v${health.champion} is registered` : 'Train and register the first one', 'uv run python -m scripts.train baseline'],
-    [health?.predictions, 'Headlines labeled by it', 'Every article scored once and cached', 'uv run python -m frontend.server score'],
-    [health?.prices, 'Stock prices (optional)', 'Daily closes for the price overlay', 'uv run python -m frontend.server prices'],
+    ['A champion model', 'Train and register the first one (skip if you already have one)', 'uv run python -m scripts.train baseline'],
+    ['Headlines labeled by it', 'Every article scored once and cached', 'uv run python -m frontend.server score'],
+    ['Stock prices (optional)', 'Daily closes for the price overlay', 'uv run python -m frontend.server prices'],
   ];
   $('#view-dashboard').innerHTML = `
     <div class="panel empty-state">
       <h2>Almost there: no predictions to show yet</h2>
-      <p>${health ? 'Three steps get the dashboard running. Here is where you are:' : esc(msg)}</p>
-      <ol class="setup">${steps.map(([done, title, hint, cmd]) => `
-        <li><span class="${done ? 'mark-ok' : 'mark-no'}">${done ? '✓' : ''}</span>
+      <p>${esc(msg)}</p>
+      <ol class="setup">${steps.map(([title, hint, cmd], i) => `
+        <li><span class="mark-no">${i + 1}</span>
           <div><b>${title}</b><span class="h">${hint}</span></div>
-          ${done ? '' : `<code>${cmd}</code>`}</li>`).join('')}
+          <code>${cmd}</code></li>`).join('')}
       </ol>
       <p class="muted">Then refresh this page. No server restart needed.</p>
     </div>`;

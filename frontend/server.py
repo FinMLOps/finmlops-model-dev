@@ -18,7 +18,6 @@ import pandas as pd
 import uvicorn
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mlflow import MlflowClient
 from pydantic import BaseModel
@@ -234,28 +233,6 @@ def models():
     except Exception as exc:
         raise HTTPException(503, f"Model registry unavailable ({exc})")
     return sorted(out, key=lambda r: -r["version"])
-
-
-@app.get("/api/health")
-def health():
-    """what the dashboard has to work with; 503 when it can't show anything (no predictions), 200 otherwise"""
-    try:
-        registry.setup()
-        champ, registry_ok = registry.champion_version(), True
-    except Exception:
-        champ, registry_ok = None, False
-    scored_by = str(news()["version"].iloc[0]) if PRED_PATH.exists() else None
-    out = {
-        "status": "ok" if scored_by and champ else "degraded" if scored_by else "down",
-        "predictions": PRED_PATH.exists(),
-        "predictions_scored_by": scored_by,
-        "predictions_outdated": bool(scored_by and champ and scored_by != str(champ)),  # rerun `score`
-        "prices": PRICE_PATH.exists(),
-        "registry": registry_ok,
-        "champion": champ,
-        "model_loaded": _model["version"],
-    }
-    return JSONResponse(out, status_code=200 if scored_by else 503)
 
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
