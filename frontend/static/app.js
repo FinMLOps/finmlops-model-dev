@@ -104,7 +104,6 @@ function skAnalysis() {
 }
 
 function showSkeletons() {
-  $('#tape').innerHTML = TICKERS.map(() => `<div class="tape-item">${sk('40px')}${sk('36px')}${sk('44px')}</div>`).join('');
   $('#watchlist').innerHTML = TICKERS.map(() => `
     <li class="wl-row wl-item">
       <div class="wl-id">${sk('28px', '', '28px')}<div>${sk('42px')}${sk('64px')}</div></div>
@@ -117,14 +116,10 @@ function showSkeletons() {
   $('#q-chg').innerHTML = sk('130px');
   $('#q-stats').innerHTML = Array.from({ length: 5 }, () => `<div class="stat">${sk('64px')}${sk('48px', 'lg')}</div>`).join('');
   $('#chart-stats').innerHTML = Array.from({ length: 4 }, () => `<div class="cs">${sk('70px')}${sk('52px', 'lg')}</div>`).join('');
-  $('#mix').innerHTML = `<div class="mixbar">${sk('100%', '', '8px')}</div>
-    <div class="mix-rows">${LABELS.map(() => `<div class="mix-row">${sk('8px', '', '8px')}${sk('64px')}${sk('30px')}${sk('34px')}${sk('40px')}</div>`).join('')}</div>`;
   $('#tbl-dash').innerHTML = skRows(6);
   $('#tbl-models').innerHTML = skRows(3);
-  $('#heatmap').innerHTML = TICKERS.map(() => sk('100%', '', '22px')).join('');
   skChart('chart-daily');
   skChart('chart-volume', 30);
-  skChart('chart-peers');
   skChart('chart-models', 14);
 }
 
@@ -161,14 +156,17 @@ function when(iso) {
   if (mins < 60) return `${Math.max(1, Math.round(mins))}m ago`;
   if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
   const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const time = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
   return `${date} ${time}`;
 }
 
 async function api(path, options) {
   const res = await fetch(path, options);
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const detail = Array.isArray(body.detail) ? body.detail.map(d => d.msg).join('; ') : body.detail;  // FastAPI validation errors are lists
+    throw new Error(detail || `${res.status} ${res.statusText}`);
+  }
   return body;
 }
 
@@ -298,7 +296,7 @@ function setupCharts() {
   Chart.defaults.animation.easing = 'easeOutQuart';
   Object.assign(Chart.defaults.plugins.legend.labels, { boxWidth: 8, boxHeight: 8, usePointStyle: true, padding: 14 });
   Object.assign(Chart.defaults.plugins.tooltip, {
-    backgroundColor: '#0c1016', borderColor: css('--border-2'), borderWidth: 1,
+    backgroundColor: css('--tooltip'), borderColor: css('--border-2'), borderWidth: 1,
     titleColor: C.text, bodyColor: C.muted, padding: 10, cornerRadius: 4, boxPadding: 4,
   });
 }
@@ -307,15 +305,16 @@ function setupCharts() {
 const current = () => state.ov.tickers.find(t => t.ticker === state.ticker);
 const change = t => t.week.net - t.prev.net;
 
-function renderTape() {
-  const items = state.ov.tickers.map(t => `
-    <button class="tape-item" data-ticker="${t.ticker}">
-      <b>${t.ticker}</b>
-      <span class="num ${tone(t.week.net)}">${signed(t.week.net)}</span>
-      <span class="num ${tone(change(t))}">${arrow(change(t))} ${signed(change(t))}</span>
-    </button>`).join('');
+// a market product must never pass old sentiment off as current
+function renderStale() {
+  const hours = (Date.now() - new Date(state.ov.as_of)) / 36e5;
+  $('#stale').hidden = hours < 24;
+  if (hours >= 24) $('#stale-text').textContent = `The newest article is ${Math.floor(hours / 24)} day${hours >= 48 ? 's' : ''} old, so this isn't current sentiment.`;
+}
+
+function renderAsOf() {
   const asOf = new Date(state.ov.as_of).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  $('#tape').innerHTML = `${items}<div class="tape-asof">Data as of ${asOf} · scored by v${esc(state.ov.scored_by)}</div>`;
+  $('#as-of').textContent = `Data as of ${asOf} · scored by v${state.ov.scored_by}`;
 }
 
 function spark(daily) {
@@ -346,7 +345,7 @@ function renderTable(el, rows) {
   }
   el._rows = rows; // the detail panel steps through these
   el.innerHTML = `
-    <thead><tr><th>Time</th><th class="t-tkr">Ticker</th><th>Headline</th><th>Sentiment</th><th class="t-conf">Confidence</th></tr></thead>
+    <thead><tr><th class="t-time">Time</th><th class="t-tkr">Ticker</th><th>Headline</th><th>Sentiment</th><th class="t-conf">Confidence</th></tr></thead>
     <tbody>${rows.map((r, i) => `
       <tr class="row-in" style="--i:${Math.min(i, 14)}" data-idx="${i}" tabindex="0">
         <td class="t-time num">${when(r.published)}</td>
@@ -367,17 +366,15 @@ async function selectTicker(ticker) {
   if (!state.ov.tickers.some(t => t.ticker === ticker)) ticker = state.ov.tickers[0].ticker;
   state.ticker = ticker;
   store('ticker', ticker);
-  $$('.wl-item, .tape-item').forEach(el => el.classList.toggle('active', el.dataset.ticker === ticker));
-  markHeatmapRow();
+  $$('.wl-item').forEach(el => el.classList.toggle('active', el.dataset.ticker === ticker));
   renderQuote();
+  document.title = `${ticker} ${signed(current().week.net)} · FinMLOps Sentiment`;
   renderDaily();
-  renderMix();
-  renderPeers();
   $('#tbl-dash').innerHTML = skRows(6);
   try {
-    const rows = await api(`/api/headlines?ticker=${ticker}&limit=25`);
+    const rows = await api(`/api/headlines?ticker=${ticker}&limit=8`);
     if (state.ticker !== ticker) return;
-    $('#dash-count').textContent = `${rows.length} most recent`;
+    $('#dash-count').textContent = state.ticker;
     renderTable($('#tbl-dash'), rows);
   } catch (e) {
     $('#tbl-dash').innerHTML = messageRow(e.message);
@@ -433,8 +430,6 @@ function renderDaily() {
   const fresh = !$('#chart-stats [data-k]');
   $('#chart-stats').innerHTML = [
     stat('Average net', 'c-avg', `${rows.length} days`, tone(avg)),
-    stat('High', 'c-hi', day(hi.date), tone(hi.net)),
-    stat('Low', 'c-lo', day(lo.date), tone(lo.net)),
     stat('Articles', 'c-total', `${Math.round(total / rows.length)} / day`),
     known.length > 1 ? stat('Close', 'c-close', `<span class="${tone(priceChange)}">${signed(priceChange, 2)}%</span> in range`) : '',
     `<div class="chart-legend"><span><i class="line"></i>Net sentiment</span>${showPrice ? '<span><i class="line price"></i>Close price</span>' : ''}${LABELS.map(l => `<span><i class="bg-${l}"></i>${cap(l)}</span>`).join('')}</div>`,
@@ -442,8 +437,6 @@ function renderDaily() {
   if (fresh) reveal($('#chart-stats'));
   tweenAll($('#chart-stats'), {
     'c-avg': [avg, v => signed(v)],
-    'c-hi': [hi.net, v => signed(v)],
-    'c-lo': [lo.net, v => signed(v)],
     'c-total': [total, v => Math.round(v).toLocaleString('en-US')],
     'c-close': [known[known.length - 1] ?? 0, v => `$${v.toFixed(2)}`],
   });
@@ -462,7 +455,7 @@ function renderDaily() {
 
   const datasets = [{
     label: 'Net sentiment', data: nets, yAxisID: 'y', order: 1,
-    borderColor: C.accent, borderWidth: 2, tension: 0.35,
+    borderColor: C.accent, borderWidth: 2, tension: 0.15,
     pointRadius: rows.map((_, i) => (marked(i) ? 5 : 0)),
     pointBackgroundColor: rows.map((_, i) => (i === hiIdx ? C.positive : i === loIdx ? C.negative : C.accent)),
     pointBorderColor: css('--panel'), pointBorderWidth: 2,
@@ -523,7 +516,7 @@ function renderDaily() {
           grace: '8%',
           border: { display: false },
           grid: { color: ctx => (ctx.tick.value === 0 ? css('--border-2') : C.grid) },
-          ticks: { maxTicksLimit: 6, callback: v => (v > 0 ? '+' : '') + v },
+          ticks: { color: showPrice ? C.accent : C.muted, maxTicksLimit: 6, callback: v => (v > 0 ? '+' : '') + v },
         }),
         price: {
           display: showPrice, position: 'left', grace: '5%',
@@ -558,67 +551,39 @@ function renderDaily() {
   });
 }
 
-function renderMix() {
-  const t = current(), w = t.week, p = t.prev;
-  let bar = $('#mix .mixbar.real');
-  if (!bar) {
-    // built once; later tickers only change the widths, so the bar slides
-    $('#mix').innerHTML = `<div class="mixbar real">${LABELS.map(l => `<span class="bg-${l}" style="width:0"></span>`).join('')}</div><div class="mix-rows"></div>`;
-    bar = $('#mix .mixbar.real');
-    reveal($('#mix'));
-    void bar.offsetWidth;
-  }
-  LABELS.forEach((l, i) => { bar.children[i].style.width = `${pct(w[l], w.articles)}%`; });
-  const values = {};
-  $('#mix .mix-rows').innerHTML = LABELS.map(l => {
-    const now = pct(w[l], w.articles), diff = now - pct(p[l], p.articles);
-    const good = Math.round(l === 'positive' ? diff : l === 'negative' ? -diff : 0);
-    values[`m-${l}-n`] = [w[l], v => Math.round(v)];
-    values[`m-${l}-p`] = [now, v => `${v.toFixed(0)}%`];
-    return `<div class="mix-row">
-      <span class="swatch bg-${l}"></span><span>${cap(l)}</span>
-      <span class="num" data-k="m-${l}-n"></span><span class="num" data-k="m-${l}-p"></span>
-      <span class="num small ${tone(good)}">${signed(diff, 0)} pp</span>
-    </div>`;
-  }).join('');
-  tweenAll($('#mix'), values);
-}
-
-function renderPeers() {
-  const peers = [...state.ov.tickers].sort((a, b) => b.week.net - a.week.net);
-  chart('chart-peers', {
-    type: 'bar',
-    data: {
-      labels: peers.map(t => t.ticker),
-      datasets: [{
-        data: peers.map(t => t.week.net),
-        backgroundColor: peers.map(t => (t.ticker === state.ticker ? C.accent : alpha(t.week.net >= 0 ? C.positive : C.negative, 0.45))),
-        borderRadius: 3, barThickness: 14,
-      }],
-    },
-    options: {
-      indexAxis: 'y',
-      onClick: (e, els) => els.length && selectTicker(peers[els[0].index].ticker),
-      onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` Net 7D: ${signed(ctx.parsed.x)}` } } },
-      scales: {
-        x: { ticks: { callback: v => (v > 0 ? '+' : '') + v } },
-        y: { grid: { display: false }, ticks: { color: C.text, font: { weight: 600 } } },
-      },
-    },
-  });
-}
-
-function showNoData(msg) {
+async function showNoData(msg) {
+  $('#watchlist').innerHTML = '<li class="wl-empty">No data yet.</li>';
+  let health = null;
+  try { health = await (await fetch('/api/health')).json(); } catch (e) { /* older server: show the steps without ticks */ }
+  const steps = [
+    [health?.champion, 'A champion model', health?.champion ? `v${health.champion} is registered` : 'Train and register the first one', 'uv run python -m scripts.train baseline'],
+    [health?.predictions, 'Headlines labeled by it', 'Every article scored once and cached', 'uv run python -m frontend.server score'],
+    [health?.prices, 'Stock prices (optional)', 'Daily closes for the price overlay', 'uv run python -m frontend.server prices'],
+  ];
   $('#view-dashboard').innerHTML = `
     <div class="panel empty-state">
-      <h2>No predictions to show yet</h2>
-      <p>${esc(msg)}</p>
-      <pre>uv run python -m scripts.train baseline   # first champion
-uv run python -m frontend.server score         # label news.parquet</pre>
+      <h2>Almost there: no predictions to show yet</h2>
+      <p>${health ? 'Three steps get the dashboard running. Here is where you are:' : esc(msg)}</p>
+      <ol class="setup">${steps.map(([done, title, hint, cmd]) => `
+        <li><span class="${done ? 'mark-ok' : 'mark-no'}">${done ? '✓' : ''}</span>
+          <div><b>${title}</b><span class="h">${hint}</span></div>
+          ${done ? '' : `<code>${cmd}</code>`}</li>`).join('')}
+      </ol>
+      <p class="muted">Then refresh this page. No server restart needed.</p>
     </div>`;
-  $('#watchlist').innerHTML = '<li class="wl-empty">No data yet.</li>';
-  $('#tape').innerHTML = '<div class="tape-item muted">No predictions yet</div>';
+}
+
+// ---------- theme ----------
+function toggleTheme() {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  store('theme', next);
+  $('#theme-btn').setAttribute('aria-label', `Switch to the ${next === 'light' ? 'dark' : 'light'} theme`);
+  setupCharts(); // charts read their colors from the CSS variables, so redraw them in the new palette
+  Object.values(state.charts).forEach(c => c.destroy());
+  state.charts = {};
+  if (state.ov) renderDaily();
+  if (state.models.length) renderModelChart();
 }
 
 // ---------- news feed ----------
@@ -767,75 +732,11 @@ async function renderDrawer() {
   }
 }
 
-// ---------- heatmap ----------
-function rgb(hex) {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-// net sentiment -> color: red below zero, panel gray at zero, green above
-function heat(v, max) {
-  const k = Math.max(-1, Math.min(1, v / max)), t = Math.abs(k) ** 0.75;
-  const base = rgb(css('--panel-2')), end = rgb(k >= 0 ? C.positive : C.negative);
-  return `rgb(${base.map((b, i) => Math.round(b + (end[i] - b) * t)).join(',')})`;
-}
-
-function renderHeatmap() {
-  const tickers = state.ov.tickers;
-  const dates = [...new Set(tickers.flatMap(t => t.daily.map(d => d.date)))].sort();
-  const byDate = Object.fromEntries(tickers.map(t => [t.ticker, Object.fromEntries(t.daily.map(d => [d.date, d]))]));
-  const max = Math.max(40, ...tickers.flatMap(t => t.daily.map(d => Math.abs(d.net))));
-  const head = dates.map((d, i) => {
-    const dt = new Date(`${d}T00:00:00Z`), dom = dt.getUTCDate(), weekend = [0, 6].includes(dt.getUTCDay());
-    const month = i === 0 || dom === 1;
-    return `<span class="hm-day ${weekend ? 'wknd' : ''} ${month ? 'month' : ''}">${month ? dt.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : dom}</span>`;
-  }).join('');
-  const rows = tickers.map((t, r) => `
-    <div class="hm-row" data-row="${t.ticker}">
-      <button class="hm-label" data-ticker="${t.ticker}">${logo(t.ticker)}${t.ticker}</button>
-      ${dates.map((d, c) => {
-        const day = byDate[t.ticker][d];
-        return day && day.articles
-          ? `<span class="hm-cell" data-t="${t.ticker}" data-d="${d}" style="--c:${c};--r:${r};background:${heat(day.net, max)}"></span>`
-          : `<span class="hm-cell empty" style="--c:${c};--r:${r}"></span>`;
-      }).join('')}
-    </div>`).join('');
-  $('#heatmap').style.setProperty('--n', dates.length);
-  $('#heatmap').innerHTML = `<div class="hm-row hm-head" style="--n:${dates.length}"><span></span>${head}</div>${rows}`;
-  $$('#heatmap .hm-row').forEach(row => row.style.setProperty('--n', dates.length));
-  state.heat = byDate;
-  markHeatmapRow();
-}
-
-function markHeatmapRow() {
-  $$('#heatmap .hm-row[data-row]').forEach(row => row.classList.toggle('sel', row.dataset.row === state.ticker));
-}
-
-function heatTip(cell) {
-  const tip = $('#hm-tip');
-  if (!cell) return tip.classList.remove('show');
-  const day = state.heat[cell.dataset.t][cell.dataset.d], top = day.top_positive || day.top_negative;
-  tip.innerHTML = `
-    <div class="tip-head"><b>${cell.dataset.t} · ${day.date ? new Date(`${day.date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''}</b>
-      <b class="num ${tone(day.net)}">${signed(day.net)}</b></div>
-    <div class="num">${day.articles} articles · ${day.positive} pos · ${day.neutral} neu · ${day.negative} neg</div>
-    ${day.top_positive ? `<div class="tip-hl">▲ ${esc(trunc(day.top_positive.title, 70))}</div>` : ''}
-    ${day.top_negative ? `<div class="tip-hl">▼ ${esc(trunc(day.top_negative.title, 70))}</div>` : ''}
-    ${top ? '<div class="tip-foot">Click to read the top headlines</div>' : ''}`;
-  const r = cell.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
-  let top_ = r.top - h - 10;
-  if (top_ < 60) top_ = r.bottom + 10;
-  tip.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8)}px`;
-  tip.style.top = `${top_}px`;
-  tip.classList.add('show');
-}
-
 // ---------- guided tour ----------
 const TOUR = [
   { sel: '.watchlist', title: 'Your watchlist', text: 'The Magnificent 7 with each one\'s <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
   { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
   { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
-  { sel: '#heatmap-panel', title: 'Every ticker, every day', text: 'Greener means more positive news, redder means more negative. Spot the big news days at a glance, and click a cell for that day\'s headlines.' },
   { sel: '.headlines-panel', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
   { sel: '.tabs', title: 'More tools', text: '<b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.' },
   { sel: '#status', title: 'The live model', text: `The current champion and its macro F1. Press <kbd>${MOD_K}</kbd> anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.` },
@@ -889,6 +790,7 @@ function paletteCommands() {
       run: () => { showTab('dashboard'); $('#price-toggle').click(); },
     }]),
     { title: 'Take the guided tour', keys: 'guided tour help', run: startTour },
+    { title: 'Switch light / dark theme', keys: 'theme light dark mode', run: toggleTheme },
   ];
   actions.forEach(a => cmds.push({ group: 'Actions', icon: ICON.action, ...a }));
   return cmds;
@@ -1268,22 +1170,11 @@ function bindUI() {
     analyze(text);
   });
 
-  // heatmap: hover for details, click a cell for that day's headlines
-  $('#heatmap').addEventListener('mouseover', e => heatTip(e.target.closest('.hm-cell:not(.empty)')));
-  $('#heatmap').addEventListener('mouseleave', () => heatTip(null));
-  addEventListener('scroll', () => heatTip(null), { passive: true });
-  $('#heatmap').addEventListener('click', e => {
-    const cell = e.target.closest('.hm-cell:not(.empty)');
-    if (!cell) return;
-    const day = state.heat[cell.dataset.t][cell.dataset.d];
-    const list = [day.top_positive, day.top_negative].filter(Boolean);
-    heatTip(null);
-    if (!list.length) return toast(`No headlines for ${cell.dataset.t} on ${cell.dataset.d}.`);
-    openDrawer(list, 0);
-  });
+  $('#dash-all').addEventListener('click', () => showTab('headlines'));
 
   // guided tour
   $('#tour-btn').addEventListener('click', startTour);
+  $('#theme-btn').addEventListener('click', toggleTheme);
   $('#tour-next').addEventListener('click', () => stepTour(1));
   $('#tour-back').addEventListener('click', () => stepTour(-1));
   $('#tour-skip').addEventListener('click', endTour);
@@ -1327,10 +1218,9 @@ async function init() {
   }
   const splashGone = hideSplash();
   if (state.ov) {
-    renderTape();
+    renderAsOf();
+    renderStale();
     renderWatchlist();
-    renderHeatmap();
-    reveal($('#tape'));
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);

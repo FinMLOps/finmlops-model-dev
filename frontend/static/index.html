@@ -3,7 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FinMLOps Sentiment</title>
+  <title>FinMLOps · Market Sentiment</title>
+  <meta name="description" content="News sentiment for the Magnificent 7, labeled by a fine-tuned FinBERT model.">
+  <link rel="icon" href="img/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+  <link rel="manifest" href="img/site.webmanifest">
+  <meta name="theme-color" content="#0b0f15">
+  <script>
+    // set the theme before the page paints, so a light-theme visitor never sees a dark flash
+    try { document.documentElement.dataset.theme = localStorage.getItem('finmlops.theme') || 'dark'; } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -30,11 +41,7 @@
 
   <header class="topbar">
     <div class="brand">
-      <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
-        <defs><linearGradient id="mark-g" x1="0" y1="0" x2="20" y2="20"><stop stop-color="#4c8dff"/><stop offset="1" stop-color="#8a5cff"/></linearGradient></defs>
-        <rect width="20" height="20" rx="5" fill="url(#mark-g)"/>
-        <path d="M5 13.5l3.5-3.5 2.5 2.5L15 7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+      <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
       FinMLOps<span class="brand-sub">Sentiment</span>
     </div>
     <nav class="tabs">
@@ -49,11 +56,15 @@
       <span class="omni-text">Search tickers, headlines, actions…</span>
       <kbd id="omni-kbd">Ctrl K</kbd>
     </button>
+    <button class="icon-btn theme-btn" id="theme-btn" type="button" title="Switch theme" aria-label="Switch to the light theme"><svg class="ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.8A5.5 5.5 0 0 1 6.2 2.5a5.5 5.5 0 1 0 7.3 7.3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
     <button class="icon-btn tour-btn" id="tour-btn" title="Take the tour" aria-label="Take the tour">?</button>
     <div class="status" id="status"><span class="dot"></span>Connecting…</div>
   </header>
 
-  <div class="tape" id="tape"><div class="tape-item muted">Loading market sentiment…</div></div>
+  <div class="stale" id="stale" role="status" hidden>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l6.5 12h-13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span><b>Data is out of date.</b> <span id="stale-text"></span> Run the data pipeline, then <code>python -m frontend.server score</code>.</span>
+  </div>
 
   <div class="layout">
     <aside class="panel watchlist">
@@ -61,6 +72,7 @@
       <div class="wl-row wl-cols"><span>Ticker</span><span>14D</span><span class="r">Net 7D</span><span class="r">Chg</span></div>
       <ul id="watchlist"></ul>
       <p class="wl-foot">Net sentiment = % positive − % negative articles, labeled by the champion model. Change is vs the 7 days before.</p>
+      <p class="wl-foot wl-asof" id="as-of"></p>
     </aside>
 
     <main>
@@ -99,28 +111,12 @@
             <div class="chart-box main"><canvas id="chart-daily"></canvas></div>
             <div class="chart-box vol"><canvas id="chart-volume"></canvas></div>
           </div>
-          <div class="side-col">
-            <div class="panel">
-              <div class="panel-head">Sentiment mix <span class="muted">7D vs prior</span></div>
-              <div id="mix"></div>
-            </div>
-            <div class="panel">
-              <div class="panel-head">Peer comparison <span class="muted">Net 7D</span></div>
-              <div class="chart-box short"><canvas id="chart-peers"></canvas></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel heatmap-panel" id="heatmap-panel">
-          <div class="panel-head">
-            Sentiment heatmap <span class="muted">net sentiment per ticker per day</span>
-            <div class="head-right hm-legend"><span>Negative</span><i class="hm-scale"></i><span>Positive</span></div>
-          </div>
-          <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div></div>
         </div>
 
         <div class="panel headlines-panel">
-          <div class="panel-head">Latest headlines <span class="muted" id="dash-count"></span></div>
+          <div class="panel-head">Latest headlines <span class="muted" id="dash-count"></span>
+            <div class="head-right"><button class="link-btn" id="dash-all" type="button">View all →</button></div>
+          </div>
           <div class="tbl-wrap"><table class="tbl" id="tbl-dash"></table></div>
         </div>
       </section>
@@ -151,7 +147,7 @@
           <div class="panel">
             <div class="panel-head">Headline analyzer <span class="muted">runs the champion model</span></div>
             <form id="an-form" class="an-form">
-              <textarea id="an-text" rows="5" placeholder="Paste a financial headline, e.g. “Nvidia beats revenue estimates as data center sales surge”"></textarea>
+              <textarea id="an-text" rows="5" maxlength="500" placeholder="Paste a financial headline, e.g. “Nvidia beats revenue estimates as data center sales surge”"></textarea>
               <div class="an-row">
                 <span class="muted small">Enter to analyze · Shift+Enter for a new line</span>
                 <button class="btn" type="submit">Analyze</button>
@@ -182,9 +178,9 @@
             <div class="panel">
               <div class="panel-head">Promotion rule</div>
               <ul class="rules">
-                <li><b>Validate.</b> Macro F1 must reach the minimum threshold.</li>
-                <li><b>Bias check.</b> No big accuracy gap between tickers, publishers or text lengths.</li>
-                <li><b>Beat the champion.</b> Higher macro F1 and not worse for any ticker.</li>
+                <li><b>Validate.</b> Macro F1 of at least 0.60 on the evaluation set, or the run fails.</li>
+                <li><b>Beat the champion.</b> Higher macro F1, and no ticker more than 0.02 less accurate.</li>
+                <li><b>Ship it.</b> The new model is copied to cloud storage, then becomes the champion.</li>
                 <li><b>Otherwise roll back.</b> The current champion stays live.</li>
               </ul>
             </div>
@@ -231,9 +227,6 @@
       </div>
     </div>
   </div>
-
-  <!-- heatmap tooltip -->
-  <div class="hm-tip" id="hm-tip" role="tooltip"></div>
 
   <!-- guided tour -->
   <div class="tour" id="tour" hidden>
