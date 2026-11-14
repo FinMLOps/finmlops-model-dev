@@ -39,6 +39,7 @@
     </div>
     <nav class="tabs">
       <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="headlines">News</button>
       <span class="tab-ink" id="tab-ink"></span>
     </nav>
     <div class="status" id="status"><span class="dot"></span>Connecting…</div>
@@ -115,6 +116,26 @@
           <div class="tbl-wrap"><table class="tbl" id="tbl-dash"></table></div>
         </div>
       </section>
+
+      <!-- news feed -->
+      <section id="view-headlines" class="view">
+        <div class="panel">
+          <div class="panel-head wrap">
+            News feed <span class="muted" id="news-count"></span>
+            <div class="filters">
+              <div class="seg" id="f-ticker"></div>
+              <div class="seg" id="f-label">
+                <button data-label="" class="active">All</button>
+                <button data-label="positive">Positive</button>
+                <button data-label="neutral">Neutral</button>
+                <button data-label="negative">Negative</button>
+              </div>
+              <input id="f-search" class="search" placeholder="Filter headlines…">
+            </div>
+          </div>
+          <div class="tbl-wrap"><table class="tbl" id="tbl-news"></table></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -122,6 +143,21 @@
     <div><span>FinMLOps</span><span>FinBERT fine-tuned with LoRA</span><span>News from Finnhub and Marketaux</span></div>
     <div><span>Sentiment is model output, not investment advice</span></div>
   </footer>
+
+  <!-- headline detail panel -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="dr-meta" id="dr-meta"></div>
+      <div class="dr-nav">
+        <button class="icon-btn" id="dr-prev" aria-label="Previous headline" title="Previous (←)">‹</button>
+        <span class="small muted num" id="dr-pos"></span>
+        <button class="icon-btn" id="dr-next" aria-label="Next headline" title="Next (→)">›</button>
+        <button class="icon-btn" id="dr-close" aria-label="Close" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="dr-body"></div>
+  </aside>
 
   <!-- heatmap tooltip -->
   <div class="hm-tip" id="hm-tip" role="tooltip"></div>

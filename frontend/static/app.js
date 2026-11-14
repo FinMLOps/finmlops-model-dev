@@ -2,6 +2,7 @@
 
 const TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'META', 'AMZN', 'TSLA'];
 const LABELS = ['positive', 'neutral', 'negative'];
+const TABS = ['dashboard', 'headlines'];
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -12,6 +13,11 @@ const state = {
   days: 30,
   price: store('price') !== '0',
   charts: {},
+  news: { ticker: '', label: '' },
+  newsRows: [],
+  newsLoaded: false,
+  drawer: null,
+  drawerToken: null,
 };
 
 // ---------- helpers ----------
@@ -243,6 +249,32 @@ function hideSplash() {
   }, wait));
 }
 
+function moveInk() {
+  const active = $('.tabs button.active'), ink = $('#tab-ink');
+  if (!active || !ink) return;
+  ink.style.width = `${active.offsetWidth}px`;
+  ink.style.transform = `translateX(${active.offsetLeft}px)`;
+}
+
+function seg(el, onPick) {
+  if (!el) return;
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    $$('button', el).forEach(x => x.classList.toggle('active', x === b));
+    onPick(b.dataset);
+  });
+}
+
+function showTab(name) {
+  if (!TABS.includes(name)) name = 'dashboard';
+  history.replaceState(null, '', `#${name}`);
+  $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  moveInk();
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  if (name === 'headlines' && !state.newsLoaded) loadNews();
+}
+
 function setupCharts() {
   Object.assign(C, {
     positive: css('--pos'), neutral: css('--neu'), negative: css('--neg'),
@@ -298,20 +330,20 @@ function renderWatchlist() {
     </li>`).join('');
 }
 
-function renderDashboardTable(rows) {
-  const el = $('#tbl-dash');
+function renderTable(el, rows) {
   if (!rows || !rows.length) {
-    el.innerHTML = messageRow('No headlines available.');
+    el.innerHTML = messageRow('No headlines match.');
     return;
   }
+  el._rows = rows; // the detail panel steps through these
   el.innerHTML = `
     <thead><tr><th>Time</th><th class="t-tkr">Ticker</th><th>Headline</th><th>Sentiment</th><th class="t-conf">Confidence</th></tr></thead>
     <tbody>${rows.map((r, i) => `
-      <tr class="row-in" style="--i:${Math.min(i, 14)}">
+      <tr class="row-in" style="--i:${Math.min(i, 14)}" data-idx="${i}" tabindex="0">
         <td class="t-time num">${when(r.published)}</td>
-        <td class="t-tkr"><span class="tkr">${logo(r.ticker)}${r.ticker}</span></td>
+        <td class="t-tkr"><span class="tkr" data-ticker="${r.ticker}">${logo(r.ticker)}${r.ticker}</span></td>
         <td class="t-title">
-          <span class="hl">${esc(r.title)}</span>${r.url ? `<a class="ext" href="${esc(r.url)}" target="_blank" rel="noopener">↗</a>` : ''}
+          <span class="hl">${esc(r.title)}</span>${r.url ? `<a class="ext" href="${esc(r.url)}" target="_blank" rel="noopener" aria-label="Open article">↗</a>` : ''}
           <span class="pub">${esc(r.publisher)}</span>
         </td>
         <td class="t-sent"><span class="pill ${r.pred}">${cap(r.pred)}</span></td>
@@ -331,12 +363,15 @@ async function selectTicker(ticker) {
   renderDaily();
   renderMix();
   renderPeers();
-
-  // render latest top headlines from daily summary
-  const t = current();
-  const topList = t.daily.flatMap(d => [d.top_positive, d.top_negative]).filter(Boolean).slice(0, 15);
-  $('#dash-count').textContent = `${topList.length} top headlines`;
-  renderDashboardTable(topList);
+  $('#tbl-dash').innerHTML = skRows(6);
+  try {
+    const rows = await api(`/api/headlines?ticker=${ticker}&limit=25`);
+    if (state.ticker !== ticker) return;
+    $('#dash-count').textContent = `${rows.length} most recent`;
+    renderTable($('#tbl-dash'), rows);
+  } catch (e) {
+    $('#tbl-dash').innerHTML = messageRow(e.message);
+  }
 }
 
 function renderQuote() {
@@ -438,6 +473,15 @@ function renderDaily() {
     options: {
       layout: { padding: { top: 16 } },
       interaction: { mode: 'index', intersect: false },
+      onClick: (e, els) => {
+        if (!els.length) return;
+        const r = rows[els[0].index];
+        const list = [r.top_positive, r.top_negative].filter(Boolean);
+        if (!list.length) return toast(`No headlines for ${labels[els[0].index]}.`);
+        const start = els[0].index === loIdx && r.top_negative ? list.indexOf(r.top_negative) : 0;
+        openDrawer(list, start);
+      },
+      onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
       plugins: {
         legend: { display: false },
         markers: {
@@ -456,6 +500,10 @@ function renderDaily() {
               if (r.top_positive) out.push(`▲ ${trunc(r.top_positive.title)}`);
               if (r.top_negative) out.push(`▼ ${trunc(r.top_negative.title)}`);
               return out;
+            },
+            footer: items => {
+              const r = rows[items[0].dataIndex];
+              return (r.top_positive || r.top_negative) ? 'Click to read top headlines' : '';
             },
           },
         },
@@ -600,16 +648,96 @@ function heatTip(cell) {
   if (!tip) return;
   if (!cell) return tip.classList.remove('show');
   const day = state.heat[cell.dataset.t][cell.dataset.d];
+  const top = day.top_positive || day.top_negative;
   tip.innerHTML = `
     <div class="tip-head"><b>${cell.dataset.t} · ${day.date ? new Date(`${day.date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''}</b>
       <b class="num ${tone(day.net)}">${signed(day.net)}</b></div>
-    <div class="num">${day.articles} articles · ${day.positive} pos · ${day.neutral} neu · ${day.negative} neg</div>`;
+    <div class="num">${day.articles} articles · ${day.positive} pos · ${day.neutral} neu · ${day.negative} neg</div>
+    ${day.top_positive ? `<div class="tip-hl">▲ ${esc(trunc(day.top_positive.title, 70))}</div>` : ''}
+    ${day.top_negative ? `<div class="tip-hl">▼ ${esc(trunc(day.top_negative.title, 70))}</div>` : ''}
+    ${top ? '<div class="tip-foot">Click to read the top headlines</div>' : ''}`;
   const r = cell.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
   let top_ = r.top - h - 10;
   if (top_ < 60) top_ = r.bottom + 10;
   tip.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8)}px`;
   tip.style.top = `${top_}px`;
   tip.classList.add('show');
+}
+
+// ---------- news feed ----------
+async function loadNews() {
+  state.newsLoaded = true;
+  const { ticker, label } = state.news;
+  $('#tbl-news').innerHTML = skRows(10);
+  try {
+    state.newsRows = await api(`/api/headlines?ticker=${ticker}&label=${label}&limit=300`);
+    filterNews();
+  } catch (e) {
+    $('#tbl-news').innerHTML = messageRow(e.message);
+  }
+}
+
+function filterNews() {
+  const q = $('#f-search').value.trim().toLowerCase();
+  const rows = q ? state.newsRows.filter(r => `${r.title} ${r.publisher}`.toLowerCase().includes(q)) : state.newsRows;
+  $('#news-count').textContent = `${rows.length} shown`;
+  renderTable($('#tbl-news'), rows);
+}
+
+// ---------- headline detail panel (drawer) ----------
+function openDrawer(rows, idx) {
+  if (!rows?.length) return;
+  const wasOpen = Boolean(state.drawer);
+  state.drawer = { rows, idx, returnFocus: wasOpen ? state.drawer.returnFocus : document.activeElement };
+  renderDrawer();
+  $('#drawer').classList.add('open');
+  $('#drawer').setAttribute('aria-hidden', 'false');
+  $('#drawer-backdrop').classList.add('open');
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => $('#dr-close').focus({ preventScroll: true }), 60);
+}
+
+function closeDrawer() {
+  if (!state.drawer) return;
+  $('#drawer').classList.remove('open');
+  $('#drawer').setAttribute('aria-hidden', 'true');
+  $('#drawer-backdrop').classList.remove('open');
+  document.body.style.overflow = '';
+  state.drawer.returnFocus?.focus?.({ preventScroll: true });
+  state.drawer = null;
+  state.drawerToken = null;
+}
+
+function stepDrawer(delta) {
+  const d = state.drawer;
+  if (!d || d.idx + delta < 0 || d.idx + delta >= d.rows.length) return;
+  d.idx += delta;
+  renderDrawer();
+}
+
+async function renderDrawer() {
+  const { rows, idx } = state.drawer, r = rows[idx];
+  $('#dr-meta').innerHTML = `${logo(r.ticker)}<b>${r.ticker}</b><span class="muted">${esc(r.publisher)}</span><span class="muted num">· ${when(r.published)}</span>`;
+  $('#dr-pos').textContent = rows.length > 1 ? `${idx + 1} / ${rows.length}` : '';
+  $('#dr-prev').hidden = $('#dr-next').hidden = rows.length < 2;
+  $('#dr-prev').disabled = idx === 0;
+  $('#dr-next').disabled = idx === rows.length - 1;
+  $('#dr-body').innerHTML = `
+    <h2 class="dr-title" id="dr-title">${esc(r.title)}</h2>
+    ${r.summary ? `<p class="dr-summary">${esc(r.summary)}</p>` : ''}
+    <div class="dr-verdict">
+      <span class="pill lg ${r.pred}">${cap(r.pred)}</span>
+      <span class="num">${(r.confidence * 100).toFixed(0)}%</span><span class="muted">confidence · champion model</span>
+    </div>
+    <div class="sub-head">Headline text</div>
+    <div id="dr-analysis">
+      <p class="muted" style="line-height:1.6;font-size:13.5px">${esc(r.text || r.title)}</p>
+    </div>
+    <div class="dr-actions">
+      ${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Read the article ↗</a>` : ''}
+    </div>`;
+  $('#dr-body').scrollTop = 0;
+  reveal($('#dr-body'));
 }
 
 function showNoData(msg) {
@@ -625,11 +753,18 @@ uv run python -m frontend.server score         # label news.parquet</pre>
 }
 
 function bindUI() {
+  // Navigation tabs
+  $$('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  addEventListener('resize', moveInk);
+  document.fonts?.ready?.then(moveInk);
+  moveInk();
+
   // Watchlist & Tape item click
   document.addEventListener('click', e => {
     const item = e.target.closest('[data-ticker]');
     if (item && !item.closest('.tbl')) {
       e.preventDefault();
+      showTab('dashboard');
       selectTicker(item.dataset.ticker);
     }
   });
@@ -657,17 +792,60 @@ function bindUI() {
     });
   }
 
+  // News filters
+  const fTicker = $('#f-ticker');
+  if (fTicker) {
+    fTicker.innerHTML = ['<button data-t="" class="active">All</button>', ...TICKERS.map(t => `<button data-t="${t}">${t}</button>`)].join('');
+    seg(fTicker, d => { state.news.ticker = d.t; loadNews(); });
+  }
+  const fLabel = $('#f-label');
+  if (fLabel) {
+    seg(fLabel, d => { state.news.label = d.label; loadNews(); });
+  }
+  $('#f-search')?.addEventListener('input', filterNews);
+
+  // Headline tables open drawer
+  ['#tbl-dash', '#tbl-news'].forEach(sel => {
+    const table = $(sel);
+    if (!table) return;
+    const open = e => {
+      const tr = e.target.closest('tr[data-idx]');
+      if (tr && !e.target.closest('a, .tkr')) openDrawer(table._rows, Number(tr.dataset.idx));
+    };
+    table.addEventListener('click', open);
+    table.addEventListener('keydown', e => { if (e.key === 'Enter') open(e); });
+  });
+
+  // Drawer events
+  $('#dr-close')?.addEventListener('click', closeDrawer);
+  $('#drawer-backdrop')?.addEventListener('click', closeDrawer);
+  $('#dr-prev')?.addEventListener('click', () => stepDrawer(-1));
+  $('#dr-next')?.addEventListener('click', () => stepDrawer(1));
+
+  // Global key navigation
+  addEventListener('keydown', e => {
+    if (state.drawer) {
+      if (e.key === 'Escape') closeDrawer();
+      if (e.key === 'ArrowLeft') stepDrawer(-1);
+      if (e.key === 'ArrowRight') stepDrawer(1);
+    }
+  });
+
   // Heatmap hover & click
   const hm = $('#heatmap');
   if (hm) {
-    hm.addEventListener('mouseover', e => {
-      const cell = e.target.closest('.hm-cell:not(.empty)');
-      heatTip(cell);
-    });
+    hm.addEventListener('mouseover', e => heatTip(e.target.closest('.hm-cell:not(.empty)')));
     hm.addEventListener('mouseleave', () => heatTip(null));
+    addEventListener('scroll', () => heatTip(null), { passive: true });
     hm.addEventListener('click', e => {
       const cell = e.target.closest('.hm-cell:not(.empty)');
-      if (cell) selectTicker(cell.dataset.t);
+      if (!cell) return;
+      const day = state.heat?.[cell.dataset.t]?.[cell.dataset.d];
+      if (!day) return;
+      const list = [day.top_positive, day.top_negative].filter(Boolean);
+      heatTip(null);
+      if (!list.length) return toast(`No headlines for ${cell.dataset.t} on ${cell.dataset.d}.`);
+      openDrawer(list, 0);
     });
   }
 }
@@ -691,6 +869,8 @@ async function init() {
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);
+    const tab = location.hash.replace('#', '');
+    if (tab && TABS.includes(tab)) showTab(tab);
   } else {
     setStatus(false, 'Offline');
   }
