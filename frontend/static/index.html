@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FinMLOps Sentiment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="image" href="img/stonks.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="splash" id="splash" role="status" aria-live="polite">
+    <div class="splash-card">
+      <img class="splash-img" src="img/stonks.png" alt="Stonks meme: a man in a suit in front of a rising stock chart" width="320" height="240">
+      <div class="splash-brand">
+        <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+          <defs><linearGradient id="splash-g" x1="0" y1="0" x2="20" y2="20"><stop stop-color="#4c8dff"/><stop offset="1" stop-color="#8a5cff"/></linearGradient></defs>
+          <rect width="20" height="20" rx="5" fill="url(#splash-g)"/>
+          <path d="M5 13.5l3.5-3.5 2.5 2.5L15 7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        FinMLOps<span>Sentiment</span>
+      </div>
+      <div class="splash-bar"><i></i></div>
+      <p class="splash-msg" id="splash-msg">Loading market sentiment…</p>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+        <defs><linearGradient id="mark-g" x1="0" y1="0" x2="20" y2="20"><stop stop-color="#4c8dff"/><stop offset="1" stop-color="#8a5cff"/></linearGradient></defs>
+        <rect width="20" height="20" rx="5" fill="url(#mark-g)"/>
+        <path d="M5 13.5l3.5-3.5 2.5 2.5L15 7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      FinMLOps<span class="brand-sub">Sentiment</span>
+    </div>
+    <nav class="tabs">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <span class="tab-ink" id="tab-ink"></span>
+    </nav>
+    <div class="status" id="status"><span class="dot"></span>Connecting…</div>
+  </header>
+
+  <div class="tape" id="tape"><div class="tape-item muted">Loading market sentiment…</div></div>
+
+  <div class="layout">
+    <aside class="panel watchlist">
+      <div class="panel-head">Watchlist <span class="muted">Magnificent 7</span></div>
+      <div class="wl-row wl-cols"><span>Ticker</span><span>14D</span><span class="r">Net 7D</span><span class="r">Chg</span></div>
+      <ul id="watchlist"></ul>
+      <p class="wl-foot">Net sentiment = % positive − % negative articles, labeled by the champion model. Change is vs the 7 days before.</p>
+    </aside>
+
+    <main>
+      <!-- dashboard -->
+      <section id="view-dashboard" class="view active">
+        <div class="panel quote">
+          <div class="quote-id">
+            <span id="q-logo"></span>
+            <div>
+              <div class="sym" id="q-sym">—</div>
+              <div class="name" id="q-name">&nbsp;</div>
+            </div>
+          </div>
+          <div class="quote-main">
+            <div class="big num" id="q-net">—</div>
+            <div class="quote-sub"><span id="q-chg"></span><span class="label">Net sentiment · 7D</span></div>
+          </div>
+          <div class="quote-stats" id="q-stats"></div>
+        </div>
+
+        <div class="grid">
+          <div class="panel chart-panel">
+            <div class="panel-head">
+              Daily sentiment
+              <div class="head-right">
+                <button class="toggle" id="price-toggle" hidden title="Show the daily closing price"><i></i>Price</button>
+                <div class="seg" id="range">
+                  <button data-days="7">1W</button>
+                  <button data-days="14">2W</button>
+                  <button data-days="30" class="active">1M</button>
+                  <button data-days="0">All</button>
+                </div>
+              </div>
+            </div>
+            <div class="chart-stats" id="chart-stats"></div>
+            <div class="chart-box main"><canvas id="chart-daily"></canvas></div>
+            <div class="chart-box vol"><canvas id="chart-volume"></canvas></div>
+          </div>
+          <div class="side-col">
+            <div class="panel">
+              <div class="panel-head">Sentiment mix <span class="muted">7D vs prior</span></div>
+              <div id="mix"></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">Peer comparison <span class="muted">Net 7D</span></div>
+              <div class="chart-box short"><canvas id="chart-peers"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel heatmap-panel" id="heatmap-panel">
+          <div class="panel-head">
+            Sentiment heatmap <span class="muted">net sentiment per ticker per day</span>
+            <div class="head-right hm-legend"><span>Negative</span><i class="hm-scale"></i><span>Positive</span></div>
+          </div>
+          <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div></div>
+        </div>
+
+        <div class="panel headlines-panel">
+          <div class="panel-head">Latest headlines <span class="muted" id="dash-count"></span></div>
+          <div class="tbl-wrap"><table class="tbl" id="tbl-dash"></table></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div><span>FinMLOps</span><span>FinBERT fine-tuned with LoRA</span><span>News from Finnhub and Marketaux</span></div>
+    <div><span>Sentiment is model output, not investment advice</span></div>
+  </footer>
+
+  <!-- heatmap tooltip -->
+  <div class="hm-tip" id="hm-tip" role="tooltip"></div>
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
