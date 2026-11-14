@@ -2,10 +2,15 @@
 
 uv run python -m frontend.server score    # label every article in news.parquet with the champion (cached)
 uv run python -m frontend.server prices   # daily closing prices from Yahoo Finance (cached, optional)
-uv run python -m frontend.server          # then open http://localhost:8000
+uv run python -m frontend.server          # then open http://localhost:8000 (HOST / PORT in .env change it)
+
+The server notices on its own when a new champion is promoted or the cached files are rewritten, so it never
+needs a restart after `score`, `prices` or a promotion.
 """
 
+import os
 import sys
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,11 +18,12 @@ import pandas as pd
 import uvicorn
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from mlflow import MlflowClient
 from pydantic import BaseModel
 
-from scripts import registry
+from scripts import hardware, registry
 from scripts.config import ROOT
 from scripts.data import load_news
 from scripts.evaluate import predict_probs
@@ -29,13 +35,33 @@ LABELS = ["positive", "neutral", "negative"]
 NAMES = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "GOOGL": "Alphabet",
          "META": "Meta Platforms", "AMZN": "Amazon", "TSLA": "Tesla"}
 
+MAX_CHARS = 500  # longest headline the Analyzer takes; each word costs one extra model pass
+
 app = FastAPI(title="FinMLOps sentiment")
+_model = {"version": None, "parts": None}
+_model_lock = threading.Lock()  # requests run in parallel threads; only one of them may (re)load the model
 
 
-@lru_cache
 def champion():
+    """the champion (model, tokenizer), reloaded automatically when a new version gets the champion alias"""
     registry.setup()
-    return registry.load()
+    version = registry.champion_version()
+    if version is None:
+        raise RuntimeError("no champion registered yet")
+    with _model_lock:
+        if _model["version"] != version:
+            _model.update(version=None, parts=None)  # let the old model go before loading the new one
+            hardware.free_memory()
+            _model.update(version=version, parts=registry.load(version))
+        return _model["parts"]
+
+
+def save_parquet(df, path):
+    """write in one step, so the running server never reads a half-written file"""
+    path.parent.mkdir(exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(path)
 
 
 def score_news():
@@ -46,8 +72,7 @@ def score_news():
     df["pred"] = [model.config.id2label[i] for i in probs.argmax(dim=-1).tolist()]
     df["confidence"] = probs.max(dim=-1).values.tolist()
     df["version"] = registry.champion_version()
-    PRED_PATH.parent.mkdir(exist_ok=True)
-    df.to_parquet(PRED_PATH, index=False)
+    save_parquet(df, PRED_PATH)
     print(f"scored {len(df)} articles -> {PRED_PATH}")
 
 
@@ -57,24 +82,32 @@ def fetch_prices():
     close = yf.download(list(NAMES), start=start, auto_adjust=True, progress=False)["Close"]
     df = close.reset_index().melt(id_vars="Date", var_name="ticker", value_name="close").dropna()
     df["date"] = df["Date"].dt.strftime("%Y-%m-%d")
-    PRICE_PATH.parent.mkdir(exist_ok=True)
-    df[["ticker", "date", "close"]].to_parquet(PRICE_PATH, index=False)
+    save_parquet(df[["ticker", "date", "close"]], PRICE_PATH)
     print(f"saved {len(df)} daily closes -> {PRICE_PATH}")
 
 
-@lru_cache
 def prices():
     """{ticker: {date: close}}; empty if prices were never fetched (the chart then just hides the price line)"""
     if not PRICE_PATH.exists():
         return {}
+    return read_prices(PRICE_PATH.stat().st_mtime_ns)
+
+
+def news():
+    if not PRED_PATH.exists():
+        raise HTTPException(503, "No predictions yet. Run: uv run python -m frontend.server score")
+    return read_news(PRED_PATH.stat().st_mtime_ns)
+
+
+# cached by the file's modification time: a rewritten file is read again on the next request, without a restart
+@lru_cache(maxsize=1)
+def read_prices(mtime):
     df = pd.read_parquet(PRICE_PATH)
     return {t: dict(zip(g["date"], g["close"].round(2))) for t, g in df.groupby("ticker")}
 
 
-@lru_cache
-def news():
-    if not PRED_PATH.exists():
-        raise HTTPException(503, "No predictions yet. Run: uv run python -m frontend.server score")
+@lru_cache(maxsize=1)
+def read_news(mtime):
     df = pd.read_parquet(PRED_PATH)
     df["date"] = df["published"].dt.strftime("%Y-%m-%d")
     return df
@@ -157,7 +190,9 @@ class Headline(BaseModel):
 @app.post("/api/predict")
 def analyze(body: Headline):
     """label + probabilities, and each word's influence: how much positive-minus-negative drops without it"""
-    words = body.text.split()[:120]
+    if len(body.text) > MAX_CHARS:
+        raise HTTPException(422, f"That's {len(body.text)} characters; the Analyzer takes headlines up to {MAX_CHARS}.")
+    words = body.text.split()
     if not words:
         raise HTTPException(400, "Type a headline first.")
     try:
@@ -166,7 +201,7 @@ def analyze(body: Headline):
         raise HTTPException(503, f"No champion model in the registry yet ({exc})")
     texts = [" ".join(words)] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
     probs = predict_probs(model, tokenizer, texts)
-    labels = [model.config.id2label[i] for i in range(probs.shape[1])]
+    labels = [model.config.id2label[i].lower() for i in range(probs.shape[1])]
     score = probs[:, labels.index("positive")] - probs[:, labels.index("negative")]
     return {
         "label": labels[int(probs[0].argmax())],
@@ -201,13 +236,38 @@ def models():
     return sorted(out, key=lambda r: -r["version"])
 
 
+@app.get("/api/health")
+def health():
+    """what the dashboard has to work with; 503 when it can't show anything (no predictions), 200 otherwise"""
+    try:
+        registry.setup()
+        champ, registry_ok = registry.champion_version(), True
+    except Exception:
+        champ, registry_ok = None, False
+    scored_by = str(news()["version"].iloc[0]) if PRED_PATH.exists() else None
+    out = {
+        "status": "ok" if scored_by and champ else "degraded" if scored_by else "down",
+        "predictions": PRED_PATH.exists(),
+        "predictions_scored_by": scored_by,
+        "predictions_outdated": bool(scored_by and champ and scored_by != str(champ)),  # rerun `score`
+        "prices": PRICE_PATH.exists(),
+        "registry": registry_ok,
+        "champion": champ,
+        "model_loaded": _model["version"],
+    }
+    return JSONResponse(out, status_code=200 if scored_by else 503)
+
+
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["score"]:
+    args = sys.argv[1:]
+    if args == ["score"]:
         score_news()
-    elif sys.argv[1:] == ["prices"]:
+    elif args == ["prices"]:
         fetch_prices()
+    elif not args:
+        uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8000")))
     else:
-        uvicorn.run(app, port=8000)
+        sys.exit("usage: python -m frontend.server [score | prices]")
