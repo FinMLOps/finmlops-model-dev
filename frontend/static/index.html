@@ -40,8 +40,16 @@
     <nav class="tabs">
       <button data-tab="dashboard" class="active">Dashboard</button>
       <button data-tab="headlines">News</button>
+      <button data-tab="analyzer">Analyzer</button>
+      <button data-tab="models">Models</button>
       <span class="tab-ink" id="tab-ink"></span>
     </nav>
+    <button id="omnibox" class="omnibox" type="button" aria-label="Open the command palette">
+      <svg class="omni-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span class="omni-text">Search tickers, headlines, actions…</span>
+      <kbd id="omni-kbd">Ctrl K</kbd>
+    </button>
+    <button class="icon-btn tour-btn" id="tour-btn" title="Take the tour" aria-label="Take the tour">?</button>
     <div class="status" id="status"><span class="dot"></span>Connecting…</div>
   </header>
 
@@ -136,6 +144,53 @@
           <div class="tbl-wrap"><table class="tbl" id="tbl-news"></table></div>
         </div>
       </section>
+
+      <!-- analyzer -->
+      <section id="view-analyzer" class="view">
+        <div class="grid an-grid">
+          <div class="panel">
+            <div class="panel-head">Headline analyzer <span class="muted">runs the champion model</span></div>
+            <form id="an-form" class="an-form">
+              <textarea id="an-text" rows="5" placeholder="Paste a financial headline, e.g. “Nvidia beats revenue estimates as data center sales surge”"></textarea>
+              <div class="an-row">
+                <span class="muted small">Enter to analyze · Shift+Enter for a new line</span>
+                <button class="btn" type="submit">Analyze</button>
+              </div>
+            </form>
+            <div class="sub-head pad">Try one</div>
+            <div class="examples" id="examples"></div>
+          </div>
+          <div class="panel" id="an-result">
+            <div class="panel-head">Result</div>
+            <div class="empty">Paste a headline to see the label, the model's confidence, and which words drove it.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- models -->
+      <section id="view-models" class="view">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">Model registry <span class="muted">finbert-sentiment</span></div>
+            <div class="tbl-wrap"><table class="tbl" id="tbl-models"></table></div>
+          </div>
+          <div class="side-col">
+            <div class="panel">
+              <div class="panel-head">Accuracy by ticker</div>
+              <div class="chart-box short"><canvas id="chart-models"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">Promotion rule</div>
+              <ul class="rules">
+                <li><b>Validate.</b> Macro F1 must reach the minimum threshold.</li>
+                <li><b>Bias check.</b> No big accuracy gap between tickers, publishers or text lengths.</li>
+                <li><b>Beat the champion.</b> Higher macro F1 and not worse for any ticker.</li>
+                <li><b>Otherwise roll back.</b> The current champion stays live.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -159,10 +214,48 @@
     <div class="drawer-body" id="dr-body"></div>
   </aside>
 
+  <!-- command palette -->
+  <div class="palette" id="palette" hidden>
+    <div class="pal-backdrop" id="pal-backdrop"></div>
+    <div class="pal-box" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="pal-search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="pal-input" placeholder="Search tickers, headlines, actions… or paste a headline" autocomplete="off" spellcheck="false"
+          role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list">
+        <kbd>esc</kbd>
+      </div>
+      <div class="pal-list" id="pal-list" role="listbox"></div>
+      <div class="pal-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> select</span><span><kbd>esc</kbd> close</span>
+        <span class="pal-count" id="pal-count"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- heatmap tooltip -->
   <div class="hm-tip" id="hm-tip" role="tooltip"></div>
-  <div class="toast" id="toast"></div>
 
+  <!-- guided tour -->
+  <div class="tour" id="tour" hidden>
+    <div class="tour-layer"></div>
+    <div class="tour-spot" id="tour-spot"></div>
+    <div class="tour-pop" id="tour-pop" role="dialog" aria-labelledby="tour-title" aria-live="polite">
+      <div class="tour-body" id="tour-body">
+        <div class="tour-step" id="tour-step"></div>
+        <h3 id="tour-title"></h3>
+        <p id="tour-text"></p>
+      </div>
+      <div class="tour-actions">
+        <button class="tour-skip" id="tour-skip">Skip tour</button>
+        <div class="tour-btns">
+          <button class="btn ghost" id="tour-back">Back</button>
+          <button class="btn" id="tour-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
   <script src="app.js"></script>
 </body>
 </html>

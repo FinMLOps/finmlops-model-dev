@@ -2,7 +2,15 @@
 
 const TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL', 'META', 'AMZN', 'TSLA'];
 const LABELS = ['positive', 'neutral', 'negative'];
-const TABS = ['dashboard', 'headlines'];
+const EXAMPLES = [
+  'Nvidia beats revenue estimates as data center sales surge',
+  'Tesla recalls 200,000 vehicles over steering defect',
+  'Microsoft revenue grows 12% but cloud growth misses estimates',
+  'Apple to hold annual shareholder meeting in February',
+];
+
+const TABS = ['dashboard', 'headlines', 'analyzer', 'models'];
+const MOD_K = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -12,12 +20,11 @@ const state = {
   ticker: store('ticker') || 'NVDA',
   days: 30,
   price: store('price') !== '0',
-  charts: {},
   news: { ticker: '', label: '' },
   newsRows: [],
+  models: [],
+  charts: {},
   newsLoaded: false,
-  drawer: null,
-  drawerToken: null,
 };
 
 // ---------- helpers ----------
@@ -36,14 +43,15 @@ const tone = x => (x > 0 ? 'up' : x < 0 ? 'down' : 'flat');
 const arrow = x => (x > 0 ? '▲' : x < 0 ? '▼' : '•');
 const signed = (x, d = 1) => (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d);
 const pct = (a, n) => (n ? (100 * a) / n : 0);
+const f3 = v => (v == null ? '—' : v.toFixed(3));
 const day = d => new Date(d + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 const messageRow = msg => `<tbody><tr><td class="empty-row">${esc(msg)}</td></tr></tbody>`;
 
-// company logo on a light tile (logos/<ticker>.svg); falls back to first letter
+// company logo on a light tile (frontend/static/logos/<ticker>.svg); falls back to the first letter if it's missing
 const logo = (ticker, cls = '') => `<span class="logo ${cls}"><img src="logos/${ticker.toLowerCase()}.svg" alt="${ticker}" loading="lazy"
   onerror="this.replaceWith(document.createTextNode('${ticker[0]}'))"></span>`;
 
-// dashed vertical line under cursor
+// dashed vertical line under the cursor
 const crosshair = {
   id: 'crosshair',
   afterDatasetsDraw(chart) {
@@ -85,6 +93,16 @@ function skChart(id, bars = 0) {
   box.insertAdjacentHTML('beforeend', `<div class="sk-chart">${inner}</div>`);
 }
 
+function skAnalysis() {
+  return `<div class="panel-head">Result</div>
+    <div class="an-res">
+      <div class="verdict">${sk('110px', 'xl')}${sk('56px', 'xl')}</div>
+      <div class="probs">${LABELS.map(() => `<div class="prob">${sk('56px')}${sk('100%', '', '6px')}${sk('44px')}</div>`).join('')}</div>
+      <div class="sub-head">${sk('100px')}</div>
+      <p class="words">${sk('86%', 'lg')} ${sk('60%', 'lg')}</p>
+    </div>`;
+}
+
 function showSkeletons() {
   $('#tape').innerHTML = TICKERS.map(() => `<div class="tape-item">${sk('40px')}${sk('36px')}${sk('44px')}</div>`).join('');
   $('#watchlist').innerHTML = TICKERS.map(() => `
@@ -102,12 +120,15 @@ function showSkeletons() {
   $('#mix').innerHTML = `<div class="mixbar">${sk('100%', '', '8px')}</div>
     <div class="mix-rows">${LABELS.map(() => `<div class="mix-row">${sk('8px', '', '8px')}${sk('64px')}${sk('30px')}${sk('34px')}${sk('40px')}</div>`).join('')}</div>`;
   $('#tbl-dash').innerHTML = skRows(6);
+  $('#tbl-models').innerHTML = skRows(3);
   $('#heatmap').innerHTML = TICKERS.map(() => sk('100%', '', '22px')).join('');
   skChart('chart-daily');
   skChart('chart-volume', 30);
   skChart('chart-peers');
+  skChart('chart-models', 14);
 }
 
+// small "High" / "Low" labels next to the marked days (options.plugins.markers.points = [{i, text, color, above}])
 const markers = {
   id: 'markers',
   afterDatasetsDraw(chart, args, opts) {
@@ -153,7 +174,6 @@ async function api(path, options) {
 
 function toast(msg) {
   const el = $('#toast');
-  if (!el) return;
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toast.timer);
@@ -162,11 +182,11 @@ function toast(msg) {
 
 function setStatus(live, html) {
   const el = $('#status');
-  if (!el) return;
   el.classList.toggle('live', live);
   el.innerHTML = `<span class="dot"></span>${html}`;
 }
 
+// create a chart, or morph the existing one to the new data so it animates instead of redrawing
 function chart(id, config) {
   const skeleton = $('#' + id).parentElement.querySelector('.sk-chart');
   if (skeleton) {
@@ -189,6 +209,7 @@ function chart(id, config) {
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const lastValue = {};
 
+// count a number from its previous value to the new one
 function countTo(el, key, to, fmt) {
   const from = lastValue[key] ?? to;
   lastValue[key] = to;
@@ -207,11 +228,10 @@ function countTo(el, key, to, fmt) {
   requestAnimationFrame(step);
 }
 
+// fill every [data-k] element under root from values = {key: [number, format]}
 function tweenAll(root, values) {
   $$('[data-k]', root).forEach(el => {
-    const entry = values[el.dataset.k];
-    if (!entry) return;
-    const [v, fmt] = entry;
+    const [v, fmt] = values[el.dataset.k];
     countTo(el, el.dataset.k, v, fmt);
   });
 }
@@ -219,7 +239,7 @@ function tweenAll(root, values) {
 function reveal(el) {
   if (!el) return;
   el.classList.remove('fade-in');
-  void el.offsetWidth;
+  void el.offsetWidth; // restart the animation
   el.classList.add('fade-in');
 }
 
@@ -228,7 +248,6 @@ const SPLASH_MESSAGES = ['Loading market sentiment…', 'Reading the headlines�
 const splashStart = performance.now();
 const splashTimer = setInterval(() => {
   const el = $('#splash-msg');
-  if (!el) return;
   el.style.opacity = '0';
   setTimeout(() => {
     el.textContent = SPLASH_MESSAGES[(SPLASH_MESSAGES.indexOf(el.textContent) + 1) % SPLASH_MESSAGES.length];
@@ -236,14 +255,14 @@ const splashTimer = setInterval(() => {
   }, 200);
 }, 1400);
 
-const SPLASH_MIN_MS = 2000;
+const SPLASH_MIN_MS = 3000;
 
+// fade the splash out, but keep it up at least SPLASH_MIN_MS; resolves once it's gone
 function hideSplash() {
   const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStart));
   return new Promise(resolve => setTimeout(() => {
     clearInterval(splashTimer);
     const el = $('#splash');
-    if (!el) return resolve();
     el.classList.add('hide');
     setTimeout(() => { el.remove(); resolve(); }, 500);
   }, wait));
@@ -257,22 +276,12 @@ function moveInk() {
 }
 
 function seg(el, onPick) {
-  if (!el) return;
   el.addEventListener('click', e => {
     const b = e.target.closest('button');
     if (!b) return;
     $$('button', el).forEach(x => x.classList.toggle('active', x === b));
     onPick(b.dataset);
   });
-}
-
-function showTab(name) {
-  if (!TABS.includes(name)) name = 'dashboard';
-  history.replaceState(null, '', `#${name}`);
-  $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  moveInk();
-  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
-  if (name === 'headlines' && !state.newsLoaded) loadNews();
 }
 
 function setupCharts() {
@@ -294,9 +303,9 @@ function setupCharts() {
   });
 }
 
-// ---------- dashboard data & rendering ----------
-const current = () => state.ov?.tickers?.find(t => t.ticker === state.ticker) || state.ov?.tickers?.[0];
-const change = t => (t ? t.week.net - t.prev.net : 0);
+// ---------- shared views ----------
+const current = () => state.ov.tickers.find(t => t.ticker === state.ticker);
+const change = t => t.week.net - t.prev.net;
 
 function renderTape() {
   const items = state.ov.tickers.map(t => `
@@ -322,7 +331,7 @@ function spark(daily) {
 
 function renderWatchlist() {
   $('#watchlist').innerHTML = state.ov.tickers.map(t => `
-    <li class="wl-row wl-item ${t.ticker === state.ticker ? 'active' : ''}" data-ticker="${t.ticker}">
+    <li class="wl-row wl-item" data-ticker="${t.ticker}">
       <div class="wl-id">${logo(t.ticker)}<div><b>${t.ticker}</b><span>${esc(t.name)}</span></div></div>
       ${spark(t.daily)}
       <span class="num ${tone(t.week.net)}">${signed(t.week.net)}</span>
@@ -331,7 +340,7 @@ function renderWatchlist() {
 }
 
 function renderTable(el, rows) {
-  if (!rows || !rows.length) {
+  if (!rows.length) {
     el.innerHTML = messageRow('No headlines match.');
     return;
   }
@@ -352,6 +361,7 @@ function renderTable(el, rows) {
     </tbody>`;
 }
 
+// ---------- dashboard ----------
 async function selectTicker(ticker) {
   if (!state.ov) return;
   if (!state.ov.tickers.some(t => t.ticker === ticker)) ticker = state.ov.tickers[0].ticker;
@@ -375,9 +385,7 @@ async function selectTicker(ticker) {
 }
 
 function renderQuote() {
-  const t = current();
-  if (!t) return;
-  const w = t.week, d = change(t);
+  const t = current(), w = t.week, d = change(t);
   if ($('#q-sym').textContent !== t.ticker) reveal($('.quote-id'));
   $('#q-logo').innerHTML = logo(t.ticker, 'lg');
   $('#q-sym').textContent = t.ticker;
@@ -403,9 +411,7 @@ function renderQuote() {
 }
 
 function renderDaily() {
-  const t = current();
-  if (!t) return;
-  let rows = t.daily;
+  let rows = current().daily;
   if (state.days) {
     const cut = new Date(new Date(state.ov.as_of) - state.days * 864e5).toISOString().slice(0, 10);
     rows = rows.filter(r => r.date > cut);
@@ -446,8 +452,13 @@ function renderDaily() {
   const yAxis = extra => ({ position: 'right', afterFit: s => { s.width = 46; }, ...extra });
   const tooltip = { position: 'nearest', caretPadding: 8 };
 
+  // mark the most positive and most negative day; clicking any day opens its top headlines
   const hiIdx = rows.indexOf(hi), loIdx = rows.indexOf(lo);
   const marked = i => i === hiIdx || i === loIdx;
+  const dayHeadlines = i => {
+    const r = rows[i], list = [r.top_positive, r.top_negative].filter(Boolean);
+    return { list, start: i === loIdx && r.top_negative ? list.indexOf(r.top_negative) : 0 };
+  };
 
   const datasets = [{
     label: 'Net sentiment', data: nets, yAxisID: 'y', order: 1,
@@ -459,6 +470,7 @@ function renderDaily() {
     fill: { target: 'origin', above: alpha(C.positive, 0.1), below: alpha(C.negative, 0.12) },
   }];
   if (known.length > 1) {
+    // always present (hidden when toggled off) so turning it on/off animates instead of redrawing
     datasets.push({
       label: 'Close', data: closes, yAxisID: 'price', order: 0, spanGaps: true, hidden: !showPrice,
       borderColor: C.price, borderWidth: 1.5, tension: 0.2, fill: false,
@@ -475,10 +487,8 @@ function renderDaily() {
       interaction: { mode: 'index', intersect: false },
       onClick: (e, els) => {
         if (!els.length) return;
-        const r = rows[els[0].index];
-        const list = [r.top_positive, r.top_negative].filter(Boolean);
+        const { list, start } = dayHeadlines(els[0].index);
         if (!list.length) return toast(`No headlines for ${labels[els[0].index]}.`);
-        const start = els[0].index === loIdx && r.top_negative ? list.indexOf(r.top_negative) : 0;
         openDrawer(list, start);
       },
       onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
@@ -497,15 +507,14 @@ function renderDaily() {
             label: ctx => (ctx.dataset.yAxisID === 'price' ? ` Close: $${ctx.parsed.y.toFixed(2)}` : ` Net sentiment: ${signed(ctx.parsed.y)}`),
             afterBody: items => {
               const r = rows[items[0].dataIndex], out = [];
+              if (r.top_positive || r.top_negative) out.push('');
               if (r.top_positive) out.push(`▲ ${trunc(r.top_positive.title)}`);
               if (r.top_negative) out.push(`▼ ${trunc(r.top_negative.title)}`);
               return out;
             },
-            footer: items => {
-              const r = rows[items[0].dataIndex];
-              return (r.top_positive || r.top_negative) ? 'Click to read top headlines' : '';
-            },
+            footer: items => (dayHeadlines(items[0].dataIndex).list.length ? 'Click to read the top headlines' : ''),
           },
+          footerColor: C.faint, footerFont: { weight: 500, size: 10.5 }, footerMarginTop: 8,
         },
       },
       scales: {
@@ -550,11 +559,10 @@ function renderDaily() {
 }
 
 function renderMix() {
-  const t = current();
-  if (!t) return;
-  const w = t.week, p = t.prev;
+  const t = current(), w = t.week, p = t.prev;
   let bar = $('#mix .mixbar.real');
   if (!bar) {
+    // built once; later tickers only change the widths, so the bar slides
     $('#mix').innerHTML = `<div class="mixbar real">${LABELS.map(l => `<span class="bg-${l}" style="width:0"></span>`).join('')}</div><div class="mix-rows"></div>`;
     bar = $('#mix .mixbar.real');
     reveal($('#mix'));
@@ -601,67 +609,16 @@ function renderPeers() {
   });
 }
 
-function rgb(hex) {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function heat(v, max) {
-  const k = Math.max(-1, Math.min(1, v / max)), t = Math.abs(k) ** 0.75;
-  const base = rgb(css('--panel-2')), end = rgb(k >= 0 ? C.positive : C.negative);
-  return `rgb(${base.map((b, i) => Math.round(b + (end[i] - b) * t)).join(',')})`;
-}
-
-function renderHeatmap() {
-  const tickers = state.ov.tickers;
-  const dates = [...new Set(tickers.flatMap(t => t.daily.map(d => d.date)))].sort();
-  const byDate = Object.fromEntries(tickers.map(t => [t.ticker, Object.fromEntries(t.daily.map(d => [d.date, d]))]));
-  const max = Math.max(40, ...tickers.flatMap(t => t.daily.map(d => Math.abs(d.net))));
-  const head = dates.map((d, i) => {
-    const dt = new Date(`${d}T00:00:00Z`), dom = dt.getUTCDate(), weekend = [0, 6].includes(dt.getUTCDay());
-    const month = i === 0 || dom === 1;
-    return `<span class="hm-day ${weekend ? 'wknd' : ''} ${month ? 'month' : ''}">${month ? dt.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : dom}</span>`;
-  }).join('');
-  const rows = tickers.map((t, r) => `
-    <div class="hm-row" data-row="${t.ticker}">
-      <button class="hm-label" data-ticker="${t.ticker}">${logo(t.ticker)}${t.ticker}</button>
-      ${dates.map((d, c) => {
-        const day = byDate[t.ticker][d];
-        return day && day.articles
-          ? `<span class="hm-cell" data-t="${t.ticker}" data-d="${d}" style="--c:${c};--r:${r};background:${heat(day.net, max)}"></span>`
-          : `<span class="hm-cell empty" style="--c:${c};--r:${r}"></span>`;
-      }).join('')}
-    </div>`).join('');
-  $('#heatmap').style.setProperty('--n', dates.length);
-  $('#heatmap').innerHTML = `<div class="hm-row hm-head" style="--n:${dates.length}"><span></span>${head}</div>${rows}`;
-  $$('#heatmap .hm-row').forEach(row => row.style.setProperty('--n', dates.length));
-  state.heat = byDate;
-  markHeatmapRow();
-}
-
-function markHeatmapRow() {
-  $$('#heatmap .hm-row[data-row]').forEach(row => row.classList.toggle('sel', row.dataset.row === state.ticker));
-}
-
-function heatTip(cell) {
-  const tip = $('#hm-tip');
-  if (!tip) return;
-  if (!cell) return tip.classList.remove('show');
-  const day = state.heat[cell.dataset.t][cell.dataset.d];
-  const top = day.top_positive || day.top_negative;
-  tip.innerHTML = `
-    <div class="tip-head"><b>${cell.dataset.t} · ${day.date ? new Date(`${day.date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''}</b>
-      <b class="num ${tone(day.net)}">${signed(day.net)}</b></div>
-    <div class="num">${day.articles} articles · ${day.positive} pos · ${day.neutral} neu · ${day.negative} neg</div>
-    ${day.top_positive ? `<div class="tip-hl">▲ ${esc(trunc(day.top_positive.title, 70))}</div>` : ''}
-    ${day.top_negative ? `<div class="tip-hl">▼ ${esc(trunc(day.top_negative.title, 70))}</div>` : ''}
-    ${top ? '<div class="tip-foot">Click to read the top headlines</div>' : ''}`;
-  const r = cell.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
-  let top_ = r.top - h - 10;
-  if (top_ < 60) top_ = r.bottom + 10;
-  tip.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8)}px`;
-  tip.style.top = `${top_}px`;
-  tip.classList.add('show');
+function showNoData(msg) {
+  $('#view-dashboard').innerHTML = `
+    <div class="panel empty-state">
+      <h2>No predictions to show yet</h2>
+      <p>${esc(msg)}</p>
+      <pre>uv run python -m scripts.train baseline   # first champion
+uv run python -m frontend.server score         # label news.parquet</pre>
+    </div>`;
+  $('#watchlist').innerHTML = '<li class="wl-empty">No data yet.</li>';
+  $('#tape').innerHTML = '<div class="tape-item muted">No predictions yet</div>';
 }
 
 // ---------- news feed ----------
@@ -684,7 +641,67 @@ function filterNews() {
   renderTable($('#tbl-news'), rows);
 }
 
-// ---------- headline detail panel (drawer) ----------
+// ---------- analyzer ----------
+async function analyze(text) {
+  if (!text.trim()) return;
+  const btn = $('#an-form .btn');
+  btn.disabled = true;
+  $('#an-result').innerHTML = skAnalysis();
+  try {
+    renderAnalysis(await predictText(text));
+  } catch (e) {
+    $('#an-result').innerHTML = `<div class="panel-head">Result</div><div class="empty error">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderAnalysis(r) {
+  $('#an-result').innerHTML = `
+    <div class="panel-head">Result</div>
+    <div class="an-res">
+      <div class="verdict"><span class="pill lg ${r.label}">${cap(r.label)}</span><span class="num">${(r.probs[r.label] * 100).toFixed(0)}%</span><span class="muted">confidence</span></div>
+      ${analysisBody(r)}
+    </div>`;
+  reveal($('#an-result .an-res'));
+}
+
+// probabilities, highlighted words and top drivers for a /api/predict result (used by the Analyzer and the detail panel)
+function analysisBody(r) {
+  const max = Math.max(1e-6, ...r.words.map(w => Math.abs(w.impact)));
+  const words = r.words.map(w => {
+    const color = w.impact >= 0 ? C.positive : C.negative;
+    const a = (Math.abs(w.impact) / max) * 0.55;
+    return `<span class="w" style="background:${alpha(color, a)}" title="${signed(w.impact * 100)} pts">${esc(w.word)}</span>`;
+  }).join(' ');
+  const ranked = [...r.words].sort((a, b) => b.impact - a.impact);
+  const list = items => (items.length
+    ? items.map(w => `<div class="driver"><span>${esc(w.word)}</span><span class="num ${tone(w.impact)}">${signed(w.impact * 100)}</span></div>`).join('')
+    : '<div class="driver muted">none</div>');
+  const probs = LABELS.map(l => `
+    <div class="prob"><span>${cap(l)}</span><div class="bar"><i class="bg-${l}" style="width:${(r.probs[l] * 100).toFixed(1)}%"></i></div>
+    <span class="num">${(r.probs[l] * 100).toFixed(1)}%</span></div>`).join('');
+
+  return `
+    <div class="probs">${probs}</div>
+    <div class="sub-head">Word influence
+      <span class="legend"><i style="background:${alpha(C.negative, 0.55)}"></i>toward negative<i style="background:${alpha(C.positive, 0.55)}"></i>toward positive</span>
+    </div>
+    <p class="words">${words}</p>
+    <div class="drivers">
+      <div><div class="sub-head">Pushes positive</div>${list(ranked.filter(w => w.impact > 0).slice(0, 4))}</div>
+      <div><div class="sub-head">Pushes negative</div>${list(ranked.filter(w => w.impact < 0).reverse().slice(0, 4))}</div>
+    </div>
+    <p class="note">Influence = how many points the positive-minus-negative score drops when that word is removed.</p>`;
+}
+
+// ---------- headline detail panel ----------
+const predictText = text => api('/api/predict', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ text }),
+});
+
 function openDrawer(rows, idx) {
   if (!rows?.length) return;
   const wasOpen = Boolean(state.drawer);
@@ -729,85 +746,508 @@ async function renderDrawer() {
       <span class="pill lg ${r.pred}">${cap(r.pred)}</span>
       <span class="num">${(r.confidence * 100).toFixed(0)}%</span><span class="muted">confidence · champion model</span>
     </div>
-    <div class="sub-head">Headline text</div>
+    <div class="sub-head">Why the model thinks so</div>
     <div id="dr-analysis">
-      <p class="muted" style="line-height:1.6;font-size:13.5px">${esc(r.text || r.title)}</p>
+      <div class="probs">${LABELS.map(() => `<div class="prob">${sk('56px')}${sk('100%', '', '6px')}${sk('44px')}</div>`).join('')}</div>
+      <p class="words" style="margin-top:16px">${sk('90%', 'lg')} ${sk('70%', 'lg')} ${sk('50%', 'lg')}</p>
     </div>
     <div class="dr-actions">
       ${r.url ? `<a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Read the article ↗</a>` : ''}
+      <button class="btn ghost" id="dr-analyze">Open in Analyzer</button>
     </div>`;
   $('#dr-body').scrollTop = 0;
   reveal($('#dr-body'));
+
+  const token = (state.drawerToken = {});
+  try {
+    const result = await predictText(r.text || r.title);
+    if (state.drawerToken === token) $('#dr-analysis').innerHTML = analysisBody(result);
+  } catch (e) {
+    if (state.drawerToken === token) $('#dr-analysis').innerHTML = `<div class="empty error">${esc(e.message)}</div>`;
+  }
 }
 
-function showNoData(msg) {
-  $('#view-dashboard').innerHTML = `
-    <div class="panel empty-state">
-      <h2>No predictions to show yet</h2>
-      <p>${esc(msg)}</p>
-      <pre>uv run python -m scripts.train baseline   # first champion
-uv run python -m frontend.server score         # label news.parquet</pre>
-    </div>`;
-  $('#watchlist').innerHTML = '<li class="wl-empty">No data yet.</li>';
-  $('#tape').innerHTML = '<div class="tape-item muted">No predictions yet</div>';
+// ---------- heatmap ----------
+function rgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// net sentiment -> color: red below zero, panel gray at zero, green above
+function heat(v, max) {
+  const k = Math.max(-1, Math.min(1, v / max)), t = Math.abs(k) ** 0.75;
+  const base = rgb(css('--panel-2')), end = rgb(k >= 0 ? C.positive : C.negative);
+  return `rgb(${base.map((b, i) => Math.round(b + (end[i] - b) * t)).join(',')})`;
+}
+
+function renderHeatmap() {
+  const tickers = state.ov.tickers;
+  const dates = [...new Set(tickers.flatMap(t => t.daily.map(d => d.date)))].sort();
+  const byDate = Object.fromEntries(tickers.map(t => [t.ticker, Object.fromEntries(t.daily.map(d => [d.date, d]))]));
+  const max = Math.max(40, ...tickers.flatMap(t => t.daily.map(d => Math.abs(d.net))));
+  const head = dates.map((d, i) => {
+    const dt = new Date(`${d}T00:00:00Z`), dom = dt.getUTCDate(), weekend = [0, 6].includes(dt.getUTCDay());
+    const month = i === 0 || dom === 1;
+    return `<span class="hm-day ${weekend ? 'wknd' : ''} ${month ? 'month' : ''}">${month ? dt.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : dom}</span>`;
+  }).join('');
+  const rows = tickers.map((t, r) => `
+    <div class="hm-row" data-row="${t.ticker}">
+      <button class="hm-label" data-ticker="${t.ticker}">${logo(t.ticker)}${t.ticker}</button>
+      ${dates.map((d, c) => {
+        const day = byDate[t.ticker][d];
+        return day && day.articles
+          ? `<span class="hm-cell" data-t="${t.ticker}" data-d="${d}" style="--c:${c};--r:${r};background:${heat(day.net, max)}"></span>`
+          : `<span class="hm-cell empty" style="--c:${c};--r:${r}"></span>`;
+      }).join('')}
+    </div>`).join('');
+  $('#heatmap').style.setProperty('--n', dates.length);
+  $('#heatmap').innerHTML = `<div class="hm-row hm-head" style="--n:${dates.length}"><span></span>${head}</div>${rows}`;
+  $$('#heatmap .hm-row').forEach(row => row.style.setProperty('--n', dates.length));
+  state.heat = byDate;
+  markHeatmapRow();
+}
+
+function markHeatmapRow() {
+  $$('#heatmap .hm-row[data-row]').forEach(row => row.classList.toggle('sel', row.dataset.row === state.ticker));
+}
+
+function heatTip(cell) {
+  const tip = $('#hm-tip');
+  if (!cell) return tip.classList.remove('show');
+  const day = state.heat[cell.dataset.t][cell.dataset.d], top = day.top_positive || day.top_negative;
+  tip.innerHTML = `
+    <div class="tip-head"><b>${cell.dataset.t} · ${day.date ? new Date(`${day.date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''}</b>
+      <b class="num ${tone(day.net)}">${signed(day.net)}</b></div>
+    <div class="num">${day.articles} articles · ${day.positive} pos · ${day.neutral} neu · ${day.negative} neg</div>
+    ${day.top_positive ? `<div class="tip-hl">▲ ${esc(trunc(day.top_positive.title, 70))}</div>` : ''}
+    ${day.top_negative ? `<div class="tip-hl">▼ ${esc(trunc(day.top_negative.title, 70))}</div>` : ''}
+    ${top ? '<div class="tip-foot">Click to read the top headlines</div>' : ''}`;
+  const r = cell.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  let top_ = r.top - h - 10;
+  if (top_ < 60) top_ = r.bottom + 10;
+  tip.style.left = `${Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8)}px`;
+  tip.style.top = `${top_}px`;
+  tip.classList.add('show');
+}
+
+// ---------- guided tour ----------
+const TOUR = [
+  { sel: '.watchlist', title: 'Your watchlist', text: 'The Magnificent 7 with each one\'s <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
+  { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
+  { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
+  { sel: '#heatmap-panel', title: 'Every ticker, every day', text: 'Greener means more positive news, redder means more negative. Spot the big news days at a glance, and click a cell for that day\'s headlines.' },
+  { sel: '.headlines-panel', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
+  { sel: '.tabs', title: 'More tools', text: '<b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.' },
+  { sel: '#status', title: 'The live model', text: `The current champion and its macro F1. Press <kbd>${MOD_K}</kbd> anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.` },
+];
+
+// ---------- command palette ----------
+const ICON = {
+  go: '<svg viewBox="0 0 16 16"><path d="M3 8h9M8.5 4.5L12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  action: '<svg viewBox="0 0 16 16"><path d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+  analyze: '<svg viewBox="0 0 16 16"><path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+};
+const GROUPS = ['Tickers', 'Headlines', 'Go to', 'Actions'];
+const pal = { items: [], active: 0, headlines: [], loading: false, timer: null, hideTimer: null, returnFocus: null };
+
+// fuzzy match: a direct substring scores high (more if at the start), otherwise the letters in order
+function fuzzy(query, text) {
+  const q = query.toLowerCase(), t = text.toLowerCase();
+  const at = t.indexOf(q);
+  if (at >= 0) return { score: 100 - at + (at === 0 ? 50 : 0), idx: Array.from(q, (_, k) => at + k) };
+  const idx = [];
+  for (let i = 0, j = 0; i < t.length && j < q.length; i++) if (t[i] === q[j]) { idx.push(i); j++; }
+  return idx.length === q.length ? { score: 40 - (idx[idx.length - 1] - idx[0]), idx } : null;
+}
+
+const mark = (text, idx) => {
+  const hit = new Set(idx);
+  return Array.from(text, (ch, i) => (hit.has(i) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join('');
+};
+
+function paletteCommands() {
+  const tickers = state.ov?.tickers || TICKERS.map(t => ({ ticker: t, name: '' }));
+  const cmds = tickers.map(t => ({
+    group: 'Tickers', title: t.ticker, sub: t.name, keys: `${t.ticker} ${t.name}`, icon: logo(t.ticker),
+    right: t.week ? `<span class="num ${tone(t.week.net)}">${signed(t.week.net)}</span>` : '',
+    run: () => {
+      if (!state.ov) return toast('No predictions loaded yet.');
+      showTab('dashboard');
+      selectTicker(t.ticker);
+    },
+  }));
+  [['dashboard', 'Dashboard'], ['headlines', 'News feed'], ['analyzer', 'Analyzer'], ['models', 'Models']].forEach(([id, name]) => cmds.push({
+    group: 'Go to', title: name, keys: `${name} ${id}`, icon: ICON.go, run: () => showTab(id),
+  }));
+  const actions = [
+    ...[[7, '1 week'], [14, '2 weeks'], [30, '1 month'], [0, 'all time']].map(([days, label]) => ({
+      title: `Chart range: ${label}`, keys: `chart range ${label}`,
+      run: () => { showTab('dashboard'); $(`#range button[data-days="${days}"]`).click(); },
+    })),
+    ...($('#price-toggle').hidden ? [] : [{
+      title: state.price ? 'Hide the price overlay' : 'Show the price overlay', keys: 'price overlay stock close toggle',
+      run: () => { showTab('dashboard'); $('#price-toggle').click(); },
+    }]),
+    { title: 'Take the guided tour', keys: 'guided tour help', run: startTour },
+  ];
+  actions.forEach(a => cmds.push({ group: 'Actions', icon: ICON.action, ...a }));
+  return cmds;
+}
+
+function renderPalette() {
+  const q = $('#pal-input').value.trim();
+  const items = [];
+  for (const c of paletteCommands()) {
+    const m = q ? fuzzy(q, c.keys) : { score: 0 };
+    if (!m) continue;
+    const t = q ? fuzzy(q, c.title) : null;
+    items.push({ ...c, score: m.score, html: t ? mark(c.title, t.idx) : esc(c.title) });
+  }
+  pal.headlines.forEach((h, i) => {
+    const at = h.title.toLowerCase().indexOf(q.toLowerCase());
+    items.push({
+      group: 'Headlines', score: 30, icon: logo(h.ticker),
+      html: at >= 0 ? mark(h.title, Array.from(q, (_, k) => at + k)) : esc(h.title),
+      right: `<span class="pill sm ${h.pred}">${cap(h.pred)}</span>`,
+      run: () => openDrawer(pal.headlines, i),
+    });
+  });
+  if (q.length >= 3) {
+    items.push({
+      group: 'Actions', score: -1, icon: ICON.analyze, html: `Analyze “${esc(trunc(q, 56))}”`, sub: 'with the champion model',
+      run: () => { showTab('analyzer'); $('#an-text').value = q; analyze(q); },
+    });
+  }
+  // with a query, the group holding the best match comes first
+  const best = g => Math.max(...items.filter(it => it.group === g).map(it => it.score), -Infinity);
+  const groups = q ? [...GROUPS].sort((a, b) => best(b) - best(a)) : GROUPS;
+  pal.items = groups.flatMap(g => items.filter(it => it.group === g).sort((a, b) => b.score - a.score));
+  pal.active = Math.min(pal.active, Math.max(0, pal.items.length - 1));
+
+  let html = '', last = '';
+  pal.items.forEach((it, i) => {
+    if (it.group !== last) html += `<div class="pal-group">${it.group}</div>`;
+    last = it.group;
+    html += `
+      <div class="pal-item ${i === pal.active ? 'active' : ''}" data-i="${i}" id="pal-opt-${i}" role="option" aria-selected="${i === pal.active}">
+        <span class="pal-icon">${it.icon}</span>
+        <span class="pal-main">${it.html}${it.sub ? `<span class="pal-sub">${esc(it.sub)}</span>` : ''}</span>
+        <span class="pal-right">${it.right || ''}<span class="pal-enter">↵</span></span>
+      </div>`;
+  });
+  if (pal.loading) html += `<div class="pal-group">Headlines</div><div class="pal-loading">${sk('72%')}</div>`;
+  $('#pal-list').innerHTML = html || `<div class="pal-empty">No results for “${esc(q)}”</div>`;
+  $('#pal-input').setAttribute('aria-activedescendant', pal.items.length ? `pal-opt-${pal.active}` : '');
+  $('#pal-count').textContent = pal.items.length ? `${pal.items.length} result${pal.items.length === 1 ? '' : 's'}` : '';
+}
+
+function setPaletteActive(i, scroll = true) {
+  pal.active = i;
+  $$('#pal-list .pal-item').forEach(el => {
+    const on = Number(el.dataset.i) === i;
+    el.classList.toggle('active', on);
+    el.setAttribute('aria-selected', on);
+    if (on && scroll) el.scrollIntoView({ block: 'nearest' });
+  });
+  $('#pal-input').setAttribute('aria-activedescendant', `pal-opt-${i}`);
+}
+
+// headline search runs on the server, a moment after typing stops
+function searchHeadlines() {
+  clearTimeout(pal.timer);
+  const q = $('#pal-input').value.trim();
+  pal.headlines = [];
+  pal.loading = q.length >= 2 && q.length <= 80 && Boolean(state.ov);
+  if (!pal.loading) return;
+  pal.timer = setTimeout(async () => {
+    let found = [];
+    try { found = await api(`/api/headlines?q=${encodeURIComponent(q)}&limit=6`); } catch { /* the rest of the palette still works */ }
+    if ($('#pal-input').value.trim() !== q) return;
+    pal.headlines = found;
+    pal.loading = false;
+    renderPalette();
+  }, 180);
+}
+
+function openPalette() {
+  if (state.tour) return;
+  closeDrawer();
+  clearTimeout(pal.hideTimer);
+  const el = $('#palette');
+  if (el.hidden) pal.returnFocus = document.activeElement;
+  el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('open'));
+  $('#pal-input').value = '';
+  pal.active = 0;
+  pal.headlines = [];
+  pal.loading = false;
+  renderPalette();
+  $('#pal-input').focus();
+}
+
+function closePalette() {
+  const el = $('#palette');
+  if (el.hidden) return;
+  clearTimeout(pal.timer);
+  el.classList.remove('open');
+  pal.hideTimer = setTimeout(() => { el.hidden = true; }, reducedMotion ? 0 : 200);
+  pal.returnFocus?.focus?.({ preventScroll: true });
+}
+
+function runPalette(i) {
+  const item = pal.items[i];
+  if (!item) return;
+  closePalette();
+  item.run();
+}
+
+const tourTarget = () => $(state.tour.steps[state.tour.i].sel);
+
+function startTour() {
+  closeDrawer();
+  closePalette();
+  showTab('dashboard');
+  const steps = TOUR.filter(s => $(s.sel)?.offsetParent);
+  if (!steps.length) return;
+  state.tour = { steps, i: 0 };
+  const el = $('#tour');
+  el.hidden = false;
+  fillTourStep();
+  scrollToTarget();
+  // start a bit larger and lower than the target, so the spotlight and card settle into place
+  const goal = tourGoal();
+  state.tour.spot = { x: goal.spot.x - 24, y: goal.spot.y - 24, w: goal.spot.w + 48, h: goal.spot.h + 48 };
+  state.tour.pop = { x: goal.pop.x, y: goal.pop.y + 14 };
+  requestAnimationFrame(() => el.classList.add('open'));
+  state.tour.raf = requestAnimationFrame(tourFrame);
+  $('#tour-next').focus({ preventScroll: true });
+}
+
+function fillTourStep() {
+  const { steps, i } = state.tour, step = steps[i];
+  $('#tour-step').textContent = `Step ${i + 1} of ${steps.length}`;
+  $('#tour-title').textContent = step.title;
+  $('#tour-text').innerHTML = step.text;
+  $('#tour-back').disabled = i === 0;
+  $('#tour-next').textContent = i === steps.length - 1 ? 'Finish' : 'Next';
+}
+
+// move to another step: the card glides there while its text crossfades
+function showTourStep() {
+  scrollToTarget();
+  const body = $('#tour-body');
+  body.classList.add('swap');
+  clearTimeout(state.tour.swapTimer);
+  state.tour.swapTimer = setTimeout(() => {
+    if (!state.tour) return;
+    fillTourStep();
+    body.classList.remove('swap');
+  }, reducedMotion ? 0 : 150);
+  $('#tour-next').focus({ preventScroll: true });
+}
+
+// scroll only when the target isn't already comfortably on screen (the top bar never needs it)
+function scrollToTarget() {
+  const el = tourTarget(), r = el.getBoundingClientRect();
+  if (el.closest('.topbar')) return;
+  if (r.top < 96 || r.bottom > innerHeight - 16) el.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
+}
+
+// where the spotlight and card should be right now (recomputed every frame, so it follows scrolling)
+function tourGoal() {
+  const r = tourTarget().getBoundingClientRect(), pad = 6, gap = 14, m = 12;
+  const pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
+  let top = r.bottom + gap, left = Math.min(Math.max(m, r.left), innerWidth - w - m);
+  if (top + h > innerHeight - m) top = r.top - gap - h; // above
+  if (top < m) { // neither fits: tuck it inside the bottom-right of the highlighted area
+    top = Math.min(r.bottom - h - 16, innerHeight - h - m);
+    left = Math.min(r.right - w - 16, innerWidth - w - m);
+  }
+  if (r.right + gap + w < innerWidth - m && r.height > innerHeight * 0.45) { // tall targets: to the right
+    left = r.right + gap;
+    top = Math.min(Math.max(m, r.top), innerHeight - h - m);
+  }
+  return {
+    spot: { x: r.left - pad, y: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 },
+    pop: { x: Math.max(m, left), y: Math.max(m, top) },
+  };
+}
+
+// every frame, ease the spotlight and card toward their goal (time-based, so it's the same at any frame rate)
+function tourFrame(now) {
+  const t = state.tour;
+  if (!t) return;
+  const dt = Math.min(64, now - (t.last ?? now));
+  t.last = now;
+  const k = reducedMotion ? 1 : 1 - Math.exp(-dt / 80);
+  const goal = tourGoal();
+  for (const key in goal.spot) t.spot[key] += (goal.spot[key] - t.spot[key]) * k;
+  for (const key in goal.pop) t.pop[key] += (goal.pop[key] - t.pop[key]) * k;
+  const spot = $('#tour-spot');
+  spot.style.transform = `translate3d(${t.spot.x}px, ${t.spot.y}px, 0)`;
+  spot.style.width = `${t.spot.w}px`;
+  spot.style.height = `${t.spot.h}px`;
+  $('#tour-pop').style.transform = `translate3d(${t.pop.x}px, ${t.pop.y}px, 0)`;
+  t.raf = requestAnimationFrame(tourFrame);
+}
+
+function stepTour(delta) {
+  const t = state.tour;
+  if (!t) return;
+  if (t.i + delta >= t.steps.length) return endTour();
+  if (t.i + delta < 0) return;
+  t.i += delta;
+  showTourStep();
+}
+
+function endTour() {
+  const t = state.tour;
+  if (!t) return;
+  state.tour = null;
+  cancelAnimationFrame(t.raf);
+  clearTimeout(t.swapTimer);
+  store('toured', '1');
+  const el = $('#tour');
+  el.classList.remove('open');
+  setTimeout(() => { if (!state.tour) el.hidden = true; }, reducedMotion ? 0 : 300);
+}
+
+// ---------- models ----------
+async function loadModels() {
+  try {
+    state.models = await api('/api/models');
+  } catch (e) {
+    setStatus(false, 'Registry unavailable');
+    $('#tbl-models').innerHTML = messageRow(e.message);
+    $('#chart-models').parentElement.querySelector('.sk-chart')?.remove();
+    return;
+  }
+  const champ = state.models.find(m => m.champion);
+  setStatus(Boolean(champ), champ ? `Champion <b>v${champ.version}</b> · Macro F1 <b class="num">${f3(champ.f1_macro)}</b>` : 'No champion yet');
+  if (!state.models.length) {
+    $('#chart-models').parentElement.querySelector('.sk-chart')?.remove();
+    $('#tbl-models').innerHTML = messageRow('No registered models yet. Run: uv run python -m scripts.train baseline');
+    return;
+  }
+  $('#tbl-models').innerHTML = `
+    <thead><tr><th>Version</th><th>Run</th><th>Registered</th><th class="r">Macro F1</th><th class="r">Accuracy</th><th>Status</th></tr></thead>
+    <tbody>${state.models.map(m => `
+      <tr>
+        <td class="num">v${m.version}</td>
+        <td>${esc(m.run)}</td>
+        <td class="num t-time">${when(m.created)}</td>
+        <td class="num r">${f3(m.f1_macro)}</td>
+        <td class="num r">${f3(m.accuracy)}</td>
+        <td>${m.champion ? '<span class="badge champ">Champion</span>' : '<span class="badge">Candidate</span>'}</td>
+      </tr>`).join('')}
+    </tbody>`;
+}
+
+function renderModelChart() {
+  const champ = state.models.find(m => m.champion);
+  const other = state.models.find(m => !m.champion);
+  const shown = [champ, other].filter(Boolean);
+  chart('chart-models', {
+    type: 'bar',
+    data: {
+      labels: TICKERS,
+      datasets: shown.map(m => ({
+        label: `v${m.version}${m.champion ? ' · champion' : ''}`,
+        data: TICKERS.map(t => m.per_ticker[t]),
+        backgroundColor: m.champion ? C.accent : alpha(C.muted, 0.5),
+        borderRadius: 3, barPercentage: 0.8, categoryPercentage: 0.7,
+      })),
+    },
+    options: {
+      plugins: { legend: { position: 'top', align: 'end' }, tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${f3(ctx.parsed.y)}` } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: C.text, maxRotation: 0, autoSkip: false, font: { size: 10.5, weight: 600 } } },
+        y: { min: 0, max: 1, ticks: { stepSize: 0.2, callback: v => v.toFixed(1) } },
+      },
+    },
+  });
+}
+
+// ---------- navigation ----------
+function showTab(name) {
+  if (!TABS.includes(name)) name = 'dashboard';
+  history.replaceState(null, '', `#${name}`);
+  $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  moveInk();
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  if (name === 'headlines' && !state.newsLoaded) loadNews();
+  if (name === 'models' && state.models.length) renderModelChart();
 }
 
 function bindUI() {
-  // Navigation tabs
   $$('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
   addEventListener('resize', moveInk);
-  document.fonts?.ready?.then(moveInk);
+  document.fonts?.ready.then(moveInk);
   moveInk();
 
-  // Watchlist & Tape item click
   document.addEventListener('click', e => {
-    const item = e.target.closest('[data-ticker]');
-    if (item && !item.closest('.tbl')) {
-      e.preventDefault();
-      showTab('dashboard');
-      selectTicker(item.dataset.ticker);
-    }
+    const el = e.target.closest('[data-ticker]');
+    if (!el || !state.ov) return;
+    showTab('dashboard');
+    selectTicker(el.dataset.ticker);
   });
 
-  // Range selector
-  const range = $('#range');
-  if (range) {
-    range.addEventListener('click', e => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      $$('button', range).forEach(x => x.classList.toggle('active', x === b));
-      state.days = Number(b.dataset.days);
-      renderDaily();
-    });
-  }
+  seg($('#range'), d => {
+    state.days = Number(d.days);
+    renderDaily();
+  });
+  $('#price-toggle').addEventListener('click', () => {
+    state.price = !state.price;
+    store('price', state.price ? '1' : '0');
+    renderDaily();
+  });
 
-  // Price toggle
-  const priceToggle = $('#price-toggle');
-  if (priceToggle) {
-    priceToggle.addEventListener('click', () => {
-      state.price = !state.price;
-      store('price', state.price ? '1' : '0');
-      priceToggle.classList.toggle('on', state.price);
-      renderDaily();
-    });
-  }
+  $('#f-ticker').innerHTML = ['<button data-t="" class="active">All</button>', ...TICKERS.map(t => `<button data-t="${t}">${t}</button>`)].join('');
+  seg($('#f-ticker'), d => { state.news.ticker = d.t; loadNews(); });
+  seg($('#f-label'), d => { state.news.label = d.label; loadNews(); });
+  $('#f-search').addEventListener('input', filterNews);
 
-  // News filters
-  const fTicker = $('#f-ticker');
-  if (fTicker) {
-    fTicker.innerHTML = ['<button data-t="" class="active">All</button>', ...TICKERS.map(t => `<button data-t="${t}">${t}</button>`)].join('');
-    seg(fTicker, d => { state.news.ticker = d.t; loadNews(); });
-  }
-  const fLabel = $('#f-label');
-  if (fLabel) {
-    seg(fLabel, d => { state.news.label = d.label; loadNews(); });
-  }
-  $('#f-search')?.addEventListener('input', filterNews);
+  $('#examples').innerHTML = EXAMPLES.map(t => `<button class="example">${esc(t)}</button>`).join('');
+  $('#examples').addEventListener('click', e => {
+    const b = e.target.closest('.example');
+    if (!b) return;
+    $('#an-text').value = b.textContent;
+    analyze(b.textContent);
+  });
+  $('#an-form').addEventListener('submit', e => { e.preventDefault(); analyze($('#an-text').value); });
+  $('#an-text').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); analyze($('#an-text').value); }
+  });
 
-  // Headline tables open drawer
+  // command palette
+  $('#omni-kbd').textContent = MOD_K;
+  $('#omnibox').addEventListener('click', () => openPalette());
+  $('#pal-backdrop').addEventListener('click', closePalette);
+  $('#pal-input').addEventListener('input', () => {
+    pal.active = 0;
+    searchHeadlines();
+    renderPalette();
+  });
+  $('#pal-input').addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const n = pal.items.length;
+      if (n) setPaletteActive((pal.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n);
+    }
+    if (e.key === 'Enter') { e.preventDefault(); runPalette(pal.active); }
+    if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  });
+  $('#pal-list').addEventListener('mousemove', e => {
+    const item = e.target.closest('.pal-item');
+    if (item && Number(item.dataset.i) !== pal.active) setPaletteActive(Number(item.dataset.i), false);
+  });
+  $('#pal-list').addEventListener('click', e => {
+    const item = e.target.closest('.pal-item');
+    if (item) runPalette(Number(item.dataset.i));
+  });
+  // headline rows open the detail panel (click, or Enter when the row is focused)
   ['#tbl-dash', '#tbl-news'].forEach(sel => {
     const table = $(sel);
-    if (!table) return;
     const open = e => {
       const tr = e.target.closest('tr[data-idx]');
       if (tr && !e.target.closest('a, .tkr')) openDrawer(table._rows, Number(tr.dataset.idx));
@@ -815,53 +1255,78 @@ function bindUI() {
     table.addEventListener('click', open);
     table.addEventListener('keydown', e => { if (e.key === 'Enter') open(e); });
   });
+  $('#dr-close').addEventListener('click', closeDrawer);
+  $('#drawer-backdrop').addEventListener('click', closeDrawer);
+  $('#dr-prev').addEventListener('click', () => stepDrawer(-1));
+  $('#dr-next').addEventListener('click', () => stepDrawer(1));
+  $('#dr-body').addEventListener('click', e => {
+    if (!e.target.closest('#dr-analyze')) return;
+    const r = state.drawer.rows[state.drawer.idx], text = r.text || r.title;
+    closeDrawer();
+    showTab('analyzer');
+    $('#an-text').value = text;
+    analyze(text);
+  });
 
-  // Drawer events
-  $('#dr-close')?.addEventListener('click', closeDrawer);
-  $('#drawer-backdrop')?.addEventListener('click', closeDrawer);
-  $('#dr-prev')?.addEventListener('click', () => stepDrawer(-1));
-  $('#dr-next')?.addEventListener('click', () => stepDrawer(1));
+  // heatmap: hover for details, click a cell for that day's headlines
+  $('#heatmap').addEventListener('mouseover', e => heatTip(e.target.closest('.hm-cell:not(.empty)')));
+  $('#heatmap').addEventListener('mouseleave', () => heatTip(null));
+  addEventListener('scroll', () => heatTip(null), { passive: true });
+  $('#heatmap').addEventListener('click', e => {
+    const cell = e.target.closest('.hm-cell:not(.empty)');
+    if (!cell) return;
+    const day = state.heat[cell.dataset.t][cell.dataset.d];
+    const list = [day.top_positive, day.top_negative].filter(Boolean);
+    heatTip(null);
+    if (!list.length) return toast(`No headlines for ${cell.dataset.t} on ${cell.dataset.d}.`);
+    openDrawer(list, 0);
+  });
 
-  // Global key navigation
-  addEventListener('keydown', e => {
+  // guided tour
+  $('#tour-btn').addEventListener('click', startTour);
+  $('#tour-next').addEventListener('click', () => stepTour(1));
+  $('#tour-back').addEventListener('click', () => stepTour(-1));
+  $('#tour-skip').addEventListener('click', endTour);
+
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if ($('#palette').hidden) openPalette();
+      else closePalette();
+      return;
+    }
+    if (!$('#palette').hidden) return; // the palette input handles its own keys
+    if (state.tour) {
+      if (e.key === 'Escape') endTour();
+      if (e.key === 'ArrowRight') stepTour(1);
+      if (e.key === 'ArrowLeft') stepTour(-1);
+      return;
+    }
     if (state.drawer) {
       if (e.key === 'Escape') closeDrawer();
       if (e.key === 'ArrowLeft') stepDrawer(-1);
       if (e.key === 'ArrowRight') stepDrawer(1);
+      return;
+    }
+    if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+      e.preventDefault();
+      openPalette();
     }
   });
-
-  // Heatmap hover & click
-  const hm = $('#heatmap');
-  if (hm) {
-    hm.addEventListener('mouseover', e => heatTip(e.target.closest('.hm-cell:not(.empty)')));
-    hm.addEventListener('mouseleave', () => heatTip(null));
-    addEventListener('scroll', () => heatTip(null), { passive: true });
-    hm.addEventListener('click', e => {
-      const cell = e.target.closest('.hm-cell:not(.empty)');
-      if (!cell) return;
-      const day = state.heat?.[cell.dataset.t]?.[cell.dataset.d];
-      if (!day) return;
-      const list = [day.top_positive, day.top_negative].filter(Boolean);
-      heatTip(null);
-      if (!list.length) return toast(`No headlines for ${cell.dataset.t} on ${cell.dataset.d}.`);
-      openDrawer(list, 0);
-    });
-  }
 }
 
 async function init() {
   setupCharts();
   bindUI();
   showSkeletons();
+  const models = loadModels();
   try {
     state.ov = await api('/api/overview');
   } catch (e) {
     showNoData(e.message);
   }
-  await hideSplash();
+  const splashGone = hideSplash();
   if (state.ov) {
-    setStatus(true, 'Live');
     renderTape();
     renderWatchlist();
     renderHeatmap();
@@ -869,11 +1334,12 @@ async function init() {
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);
-    const tab = location.hash.replace('#', '');
-    if (tab && TABS.includes(tab)) showTab(tab);
-  } else {
-    setStatus(false, 'Offline');
   }
+  await models;
+  showTab(location.hash.slice(1));
+  // first visit: show the tour once the splash is gone
+  await splashGone;
+  if (state.ov && !store('toured') && location.hash.slice(1) === 'dashboard') setTimeout(startTour, 400);
 }
 
 init();
