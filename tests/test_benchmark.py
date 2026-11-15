@@ -82,3 +82,18 @@ def test_annotator_agreement_uses_only_the_shared_rows():
     out = benchmark.annotator_agreement(gold)
     assert out["rows"] == 3 and out["disagreements"] == 1
     assert benchmark.annotator_agreement(gold.assign(label_2="")) == {}
+
+
+def test_load_eval_with_a_gold_split_keeps_only_the_newest_gold_rows(tmp_path, monkeypatch, make_news):
+    from scripts import data
+
+    monkeypatch.setattr(benchmark, "GOLD_PATH", tmp_path / "gold.csv")
+    (tmp_path / "gold.csv").write_text("id\n")
+    gold = make_news([{"id": "old", "title": "a", "url": "1", "published": "2026-11-07"},
+                      {"id": "gap", "title": "b", "url": "2", "published": "2026-11-09T12:00"},
+                      {"id": "new", "title": "c", "url": "3", "published": "2026-11-10T08:00"}])
+    monkeypatch.setattr(benchmark, "load_gold", lambda: gold)
+    split = pd.Timestamp("2026-11-10", tz="UTC")
+    monkeypatch.setattr(benchmark, "GOLD_SPLIT", split)
+    monkeypatch.setattr(data, "GOLD_SPLIT", split)
+    assert benchmark.load_eval()["id"].tolist() == ["new"]

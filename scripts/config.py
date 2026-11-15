@@ -1,6 +1,7 @@
 """All settings in one place; the other scripts import from here."""
 
 import logging
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +38,13 @@ EMBARGO = pd.Timedelta(hours=24)
 GOLD_FINNHUB_PER_TICKER = 100
 GOLD_MARKETAUX_PER_TICKER = 15
 GOLD_SHARED = 0.15
+# Experiment, off unless GOLD_SPLIT is set (e.g. GOLD_SPLIT=2026-11-10 in .env): learn from the older part of the gold
+# set and compare champion and challenger on the newer part only, since Marketaux labels barely agree with the gold
+# labels. Gold rows from GOLD_SPLIT on are the eval set, rows in the EMBARGO before it validate (best epoch, Optuna
+# trials) and so also keep training a day away from the eval set, and older rows train.
+GOLD_SPLIT = pd.Timestamp(os.environ["GOLD_SPLIT"], tz="UTC") if os.getenv("GOLD_SPLIT") else None
+# with GOLD_SPLIT, also train on the Marketaux rows (validation stays gold-only)
+GOLD_SPLIT_MARKETAUX = os.getenv("GOLD_SPLIT_MARKETAUX", "").strip().lower() in {"1", "true", "yes"}
 
 # model and training
 BASE = "ProsusAI/finbert"
@@ -45,6 +53,9 @@ MAX_LENGTH = 256
 SEED = 0
 DEFAULTS = {"lr": 2e-4, "r": 8, "alpha": 16, "dropout": 0.1, "epochs": 3, "batch_size": 16}
 WEIGHT_DECAY = 0.01
+# inverse-frequency class weights in the loss, so rare labels count as much as common ones. CLASS_WEIGHTS=0 in .env
+# turns them off, e.g. when the eval set is mostly neutral and the weights push the model away from neutral
+CLASS_WEIGHTS = os.getenv("CLASS_WEIGHTS", "1").strip().lower() not in {"0", "false", "no"}
 WARMUP_FRAC = 0.1  # share of the training steps in which the learning rate ramps up from 0
 MAX_GRAD_NORM = 1.0  # gradient clipping, so one bad batch can't throw the weights off
 MIXED_PRECISION = True  # bf16 / fp16 training on NVIDIA GPUs only; Apple Silicon and CPU always train in fp32

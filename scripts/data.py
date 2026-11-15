@@ -10,9 +10,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from scripts.config import (COLUMNS, DATA_PATH, EMBARGO, GOLD_FINNHUB_PER_TICKER, GOLD_MARKETAUX_PER_TICKER,
-                            GOLD_PATH, GOLD_SHARED, GOLD_TODO_PATH, LABEL_THRESHOLD, LABELS, SEED, STUDY, TEST_END,
-                            TEST_START, TICKER_NAMES, TICKERS, VAL_FRAC, setup_logging)
+from scripts.config import (CLASS_WEIGHTS, COLUMNS, DATA_PATH, EMBARGO, GOLD_FINNHUB_PER_TICKER, GOLD_MARKETAUX_PER_TICKER,
+                            GOLD_PATH, GOLD_SHARED, GOLD_SPLIT, GOLD_SPLIT_MARKETAUX, GOLD_TODO_PATH, LABEL_THRESHOLD,
+                            LABELS, SEED, STUDY, TEST_END, TEST_START, TICKER_NAMES, TICKERS, VAL_FRAC, setup_logging)
 
 log = logging.getLogger(__name__)
 GOLD_COLUMNS = ["id", "ticker", "label", "mixed_signal"]
@@ -114,6 +114,22 @@ def drop_leaks(df, *held_out):
     return df[~leak]
 
 
+def split_gold(gold, split=None, embargo=EMBARGO):
+    """(train, validation, test) of the gold set by date, for the GOLD_SPLIT experiment: test from `split` on,
+    validation in the embargo before it, training before that. Rows that repeat a test story (same headline or URL)
+    leave training and validation, so the eval set stays unseen."""
+    split = GOLD_SPLIT if split is None else split
+    if split is None:
+        raise ValueError("no gold split date; set GOLD_SPLIT (e.g. 2026-11-10)")
+    test = gold[gold["published"] >= split]
+    val = gold[(gold["published"] >= split - embargo) & (gold["published"] < split)]
+    train = gold[gold["published"] < split - embargo]
+    if test.empty or val.empty or train.empty:
+        raise ValueError(f"GOLD_SPLIT {split.date()} leaves {len(train)} train, {len(val)} validation and "
+                         f"{len(test)} test gold rows; every part needs some")
+    return drop_leaks(train, test), drop_leaks(val, test), test
+
+
 def data_snapshot():
     """short commit hash of the data pipeline snapshot news.parquet came from (from the .dvc file)"""
     # `dvc import` wrote this small text file next to the parquet; git tracks it, the parquet itself is not in git
@@ -137,13 +153,22 @@ def data_snapshot():
 
 def data_info():
     """which data and label rule a run used, so every run can be traced"""
-    return {"data_snapshot": data_snapshot(), "test_start": str(TEST_START.date()), "label_threshold": LABEL_THRESHOLD,
+    info = {"data_snapshot": data_snapshot(), "test_start": str(TEST_START.date()), "label_threshold": LABEL_THRESHOLD,
             "embargo_hours": EMBARGO.total_seconds() / 3600}
+    if GOLD_SPLIT is not None:
+        info.update(gold_split=str(GOLD_SPLIT.date()), gold_split_marketaux=GOLD_SPLIT_MARKETAUX)
+    return info
 
 
 def study_name():
-    """one Optuna study per data snapshot and label cut-off, so trials on old data never mix with new ones"""
-    return f"{STUDY}-{data_snapshot()}-thr{round(LABEL_THRESHOLD * 100):02d}"
+    """one Optuna study per data snapshot and label cut-off (and gold split and loss weighting), so trials on other
+    data or with another loss never mix"""
+    name = f"{STUDY}-{data_snapshot()}-thr{round(LABEL_THRESHOLD * 100):02d}"
+    if GOLD_SPLIT is not None:
+        name += f"-gold{GOLD_SPLIT:%Y%m%d}{'mx' if GOLD_SPLIT_MARKETAUX else ''}"
+    if not CLASS_WEIGHTS:
+        name += "-nocw"
+    return name
 
 
 def in_benchmark_window(df):

@@ -13,8 +13,9 @@ import logging
 import pandas as pd
 from sklearn.metrics import accuracy_score, cohen_kappa_score
 
-from scripts.config import COLUMNS, GOLD_PATH, LABEL_THRESHOLD, ROOT, TEST_END, TEST_START, THRESHOLDS, setup_logging
-from scripts.data import data_snapshot, in_benchmark_window, load_gold, load_news, score_to_label
+from scripts.config import (COLUMNS, GOLD_PATH, GOLD_SPLIT, LABEL_THRESHOLD, ROOT, TEST_END, TEST_START, THRESHOLDS,
+                            setup_logging)
+from scripts.data import data_snapshot, in_benchmark_window, load_gold, load_news, score_to_label, split_gold
 from scripts.evaluate import metrics
 
 log = logging.getLogger(__name__)
@@ -57,8 +58,12 @@ def get():
 
 
 def load_eval():
-    """the set champion and challenger are compared on: the gold set once it exists, else the frozen benchmark"""
-    return load_gold() if GOLD_PATH.exists() else get()
+    """the set champion and challenger are compared on: the gold set once it exists, else the frozen benchmark.
+    With GOLD_SPLIT, only the newer part of the gold set, since the older part is trained on."""
+    if not GOLD_PATH.exists():
+        return get()
+    gold = load_gold()
+    return split_gold(gold)[2] if GOLD_SPLIT is not None else gold
 
 
 def report(df):
