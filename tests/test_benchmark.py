@@ -74,3 +74,11 @@ def test_agreement_only_uses_marketaux_rows():
     assert out["agreement_rows"] == 2
     assert out["agreement_thr15"] == 0.5
     assert benchmark.agreement(gold[gold["source"] == "finnhub"]) == {}
+
+
+def test_annotator_agreement_uses_only_the_shared_rows():
+    gold = pd.DataFrame({"label": ["positive", "negative", "neutral", "positive"],
+                         "label_2": ["positive", "negative", "positive", ""]})
+    out = benchmark.annotator_agreement(gold)
+    assert out["rows"] == 3 and out["disagreements"] == 1
+    assert benchmark.annotator_agreement(gold.assign(label_2="")) == {}

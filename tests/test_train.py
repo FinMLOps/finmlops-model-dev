@@ -109,3 +109,32 @@ def test_a_diverged_optuna_trial_is_skipped(monkeypatch):
 def test_cli_rejects_bad_arguments(args):
     with pytest.raises(SystemExit):
         train.main(args)
+
+
+def test_llm_labels_join_training_only_when_they_pass_the_gold_check(tmp_path, monkeypatch, make_news):
+    story = lambda i, day, **kw: {"id": i, "title": f"story {i}", "url": f"https://news/{i}", "published": day, **kw}
+    marketaux = make_news([story("m", "2026-10-10"), story("m2", "2026-10-20")])
+    llm = make_news([story("f", "2026-10-15", source="finnhub")]).drop(columns="sentiment_score")
+    monkeypatch.setattr(train, "load_labeled", lambda: marketaux.assign(label="positive", label_source="marketaux"))
+    monkeypatch.setattr(train.llm_labels, "training_rows", lambda: llm.assign(label="negative", label_source="llm"))
+    monkeypatch.setattr(train, "LLM_LABELS_PATH", tmp_path / "llm.parquet")
+    (tmp_path / "llm.parquet").write_text("exists")
+    monkeypatch.setattr(train, "GOLD_PATH", tmp_path / "gold.csv")
+    (tmp_path / "gold.csv").write_text("exists")
+    gold = {"labeled_by": "human"}
+    monkeypatch.setattr(train, "load_gold", lambda: make_news([story("g", "2026-11-07", **gold)]))
+    monkeypatch.setattr(train, "drop_gold", lambda df: df)
+    monkeypatch.setattr(train.benchmark, "get", lambda: make_news([story("b", "2026-11-07")]))
+    monkeypatch.setattr(train.benchmark, "marketaux_kappa", lambda gold: 0.4)
+
+    monkeypatch.setattr(train.llm_labels, "agreement", lambda gold: {"kappa": 0.5})  # better than Marketaux
+    tr, va, info = train.training_data()
+    assert "llm" in set(pd.concat([tr, va])["label_source"])
+    monkeypatch.setattr(train.llm_labels, "agreement", lambda gold: {"kappa": 0.3})  # worse
+    tr, va, info = train.training_data()
+    assert set(pd.concat([tr, va])["label_source"]) == {"marketaux"}
+    assert info["llm_kappa"] == 0.3 and info["marketaux_kappa"] == 0.4
+    gold["labeled_by"] = "gemini:flash"  # an LLM-labeled gold set can't vouch for LLM labels
+    monkeypatch.setattr(train.llm_labels, "agreement", lambda gold: {"kappa": 0.99})
+    tr, va, info = train.training_data()
+    assert set(pd.concat([tr, va])["label_source"]) == {"marketaux"}

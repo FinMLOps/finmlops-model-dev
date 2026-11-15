@@ -13,7 +13,7 @@ import logging
 import pandas as pd
 from sklearn.metrics import accuracy_score, cohen_kappa_score
 
-from scripts.config import COLUMNS, GOLD_PATH, ROOT, TEST_END, TEST_START, THRESHOLDS, setup_logging
+from scripts.config import COLUMNS, GOLD_PATH, LABEL_THRESHOLD, ROOT, TEST_END, TEST_START, THRESHOLDS, setup_logging
 from scripts.data import data_snapshot, in_benchmark_window, load_gold, load_news, score_to_label
 from scripts.evaluate import metrics
 
@@ -83,11 +83,39 @@ def agreement(gold):
     return out
 
 
+def annotator_agreement(gold):
+    """how often two people agree on the shared gold rows (label vs label_2): {rows, accuracy, kappa, disagreements}.
+    Below about 0.6 kappa the labeling guidelines are too vague, and no model can be judged more precisely than that."""
+    shared = gold[gold["label_2"] != ""] if "label_2" in gold else gold.iloc[:0]
+    if shared.empty:
+        return {}
+    return {"rows": len(shared), "accuracy": accuracy_score(shared["label"], shared["label_2"]),
+            "kappa": cohen_kappa_score(shared["label"], shared["label_2"]),
+            "disagreements": int((shared["label"] != shared["label_2"]).sum())}
+
+
+def marketaux_kappa(gold):
+    """Marketaux's agreement with the hand labels at the current cut-off, or None if there are no Marketaux gold rows"""
+    return agreement(gold).get(f"kappa_{thr(LABEL_THRESHOLD)}")
+
+
+def show(name, values):
+    print(f"\n{name}")
+    if not values:
+        print("  not measured yet")
+    for k, v in values.items():
+        print(f"  {k:>16}  {v:.3f}" if isinstance(v, float) else f"  {k:>16}  {v}")
+
+
 if __name__ == "__main__":
+    from scripts import llm_labels  # only the report needs it
+
     setup_logging()
     bench = get()
     print(f"benchmark: {len(bench)} rows, labels {bench['label'].value_counts().to_dict()}")
     if not GOLD_PATH.exists():
         raise SystemExit(f"no {GOLD_PATH.name} yet; run `uv run python -m scripts.data sample-gold` and label it")
-    for k, v in agreement(load_gold()).items():
-        print(f"{k:>16}  {v:.3f}" if isinstance(v, float) else f"{k:>16}  {v}")
+    gold = load_gold()
+    show("Annotators vs each other (shared rows)", annotator_agreement(gold))
+    show("Marketaux score vs hand labels", agreement(gold))
+    show("LLM vs hand labels", llm_labels.agreement(gold))

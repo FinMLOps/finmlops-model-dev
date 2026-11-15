@@ -14,16 +14,19 @@ import sys
 
 import mlflow
 import optuna
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from peft import LoraConfig, TaskType, get_peft_model
 from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup, set_seed
 
-from scripts import benchmark, hardware, registry
-from scripts.config import (BASE, BASE_REVISION, DEFAULTS, GOLD_PATH, LABELS, MAX_GRAD_NORM, MAX_LENGTH, N_TRIALS,
-                            SEED, STORAGE, WARMUP_FRAC, WEIGHT_DECAY, setup_logging)
-from scripts.data import data_info, drop_gold, load_gold, load_labeled, split_by_date, study_name
+from scripts import benchmark, hardware, llm_labels, registry
+from scripts.config import (BASE, BASE_REVISION, DEFAULTS, GOLD_PATH, LABELS, LLM_LABELS_PATH, MAX_GRAD_NORM,
+                            MAX_LENGTH, N_TRIALS, SEED, STORAGE, USE_LLM_LABELS, WARMUP_FRAC, WEIGHT_DECAY,
+                            setup_logging)
+from scripts.data import (data_info, drop_gold, drop_leaks, load_gold, load_labeled, model_input, split_by_date,
+                          study_name)
 from scripts.evaluate import metrics, predict
 
 log = logging.getLogger(__name__)
@@ -49,11 +52,11 @@ def baseline():
     dev = hardware.device()
     tokenizer, model = load_tokenizer(), load_base().to(dev)
     bench = benchmark.get()
-    bench["pred"] = predict(model, tokenizer, bench["text"].tolist())
+    bench["pred"] = predict(model, tokenizer, model_input(bench))
     extra = benchmark.report(bench)
     if GOLD_PATH.exists():  # the gold set decides promotion once we have it
         df = load_gold()
-        df["pred"] = predict(model, tokenizer, df["text"].tolist())
+        df["pred"] = predict(model, tokenizer, model_input(df))
         extra.update(benchmark.agreement(df))  # how far we can trust Marketaux's labels
     else:
         df = bench
@@ -91,7 +94,7 @@ def fit(model, tokenizer, train_df, val_df, p):
     amp = hardware.amp_dtype(dev)
     model.to(dev)
     label2id = {name.lower(): i for name, i in model.config.label2id.items()}
-    texts = [str(t) for t in train_df["text"]]
+    texts = model_input(train_df)
     labels = torch.tensor([label2id[label] for label in train_df["label"]])
     weight = class_weights(labels, len(label2id)).to(dev)
 
@@ -127,7 +130,7 @@ def fit(model, tokenizer, train_df, val_df, p):
             bar.set_postfix(loss=f"{losses[-1]:.4f}")
 
         train_loss = sum(losses) / len(losses)
-        val_f1 = metrics(val_df.assign(pred=predict(model, tokenizer, val_df["text"].tolist())))["f1_macro"]
+        val_f1 = metrics(val_df.assign(pred=predict(model, tokenizer, model_input(val_df))))["f1_macro"]
         mlflow.log_metrics({"train_loss": train_loss, "epoch_val_f1_macro": val_f1}, step=epoch)
         log.info("epoch %d: train loss %.4f, validation macro F1 %.3f", epoch, train_loss, val_f1)
         if val_f1 > best_f1:  # keep a copy of the trainable weights (LoRA + head, a few MB) of the best epoch
@@ -142,22 +145,48 @@ def fit(model, tokenizer, train_df, val_df, p):
     return model
 
 
+def training_data():
+    """(train, validation, info). Marketaux rows, plus LLM-labeled Finnhub rows when those agree with the gold set at
+    least as well as Marketaux does; minus gold rows and any story that also appears in a test set; split by date."""
+    rows, gold, info = load_labeled(), (load_gold() if GOLD_PATH.exists() else None), {}
+    if USE_LLM_LABELS and LLM_LABELS_PATH.exists():
+        if gold is None:
+            log.warning("LLM labels found, but there is no gold set to check them against, so they are not used")
+        elif (gold["labeled_by"] != "human").any():  # checking LLM labels against LLM labels proves nothing
+            log.warning("the gold set is itself LLM-labeled, so LLM training labels can't be checked and are not used")
+        else:
+            info["marketaux_kappa"] = benchmark.marketaux_kappa(gold)
+            info["llm_kappa"] = llm_labels.agreement(gold).get("kappa")
+            if llm_labels.gate(info["marketaux_kappa"], info["llm_kappa"]):
+                rows = pd.concat([rows, llm_labels.training_rows()], ignore_index=True)
+            else:
+                log.info("not using LLM labels: they agree with the gold set less than Marketaux does (%s vs %s)",
+                         info["llm_kappa"], info["marketaux_kappa"])
+    train_df, val_df = split_by_date(drop_gold(rows))
+    # after the split, so the log only counts rows that would really have been trained or validated on
+    held_out = (benchmark.get(), gold)
+    train_df, val_df = drop_leaks(train_df, *held_out), drop_leaks(val_df, *held_out)
+    sources = train_df["label_source"].value_counts()
+    info["label_sources"] = ", ".join(f"{name}: {n}" for name, n in sources.items())
+    return train_df, val_df, info
+
+
 def train(params=None, save=True, run_name="lora"):
     """one LoRA run; returns run id, registered version (if saved) and val/test metrics"""
     registry.setup()
     p = {**DEFAULTS, **(params or {})}
     set_seed(SEED)  # before the model is built: LoRA's starting weights are random
-    train_df, val_df = split_by_date(drop_gold(load_labeled()))
+    train_df, val_df, info = training_data()
     test_df = benchmark.get()
     dev = hardware.device()
     tokenizer = load_tokenizer()
     with mlflow.start_run(run_name=run_name, nested=True) as run:
         mlflow.log_params({**p, "train_rows": len(train_df), "val_rows": len(val_df), "test_rows": len(test_df),
-                           "max_length": MAX_LENGTH, **data_info(), **hardware.info(dev)})
+                           "max_length": MAX_LENGTH, **info, **data_info(), **hardware.info(dev)})
         model = fit(build_model(p), tokenizer, train_df, val_df, p)
         results = {}
         for name, df in [("val", val_df), ("test", test_df)]:
-            results[name] = metrics(df.assign(pred=predict(model, tokenizer, df["text"].tolist())))
+            results[name] = metrics(df.assign(pred=predict(model, tokenizer, model_input(df))))
             mlflow.log_metrics({f"{name}_{k}": v for k, v in results[name].items()})
         version = registry.log_model(model.merge_and_unload(), tokenizer) if save else None
     del model
