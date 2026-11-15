@@ -54,6 +54,25 @@ Every run fails validation (macro F1 below 0.6), and every interval includes zer
   If the team cares more about accuracy than macro F1, the unweighted model is far better than the champion on
   accuracy, but the promotion rule uses macro F1.
 
+## Which metric decides
+
+We keep **macro F1** as the promotion metric, chosen from how the model is used rather than from which run it favors:
+
+- The dashboard (`frontend/server.py`) shows net sentiment (% positive − % negative) and each day's top positive and
+  negative headline. The positive and negative calls are the product; neutral is what's left over.
+- **Accuracy rewards doing nothing.** On the 262 eval rows (76% neutral), a model that always says "neutral" gets
+  accuracy **0.760**, better than every model above, with macro F1 0.288 and MCC 0.000. The unweighted model's 0.718
+  accuracy comes the same way, from labeling almost everything neutral and missing positive news (F1 0.083), which
+  would leave the dashboard's net sentiment and top positive headlines nearly empty.
+- **Weighted F1** weights each class by its row count, so it is dominated by neutral just like accuracy.
+- **Macro F1** averages the three classes' F1 equally, so missing the rare positive and negative headlines costs as
+  much as missing neutral ones, which matches what the dashboard needs. MCC or Cohen's kappa would also work (chance-
+  corrected, 0 for always-neutral) but are harder to read per class, and the README, the promotion rule and every
+  MLflow run already use macro F1.
+
+We did not switch to a metric picked after seeing these results (for example the average of only the positive and
+negative F1), since that would make the comparison with the champion meaningless.
+
 ## Next step
 
 More training rows labeled like the gold set: run `scripts/llm_labels.py` over the Finnhub training rows with the same
