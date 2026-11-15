@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FinMLOps · Market Sentiment</title>
+  <meta name="description" content="News sentiment for the Magnificent 7, labeled by a fine-tuned FinBERT model.">
+  <link rel="icon" href="img/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+  <link rel="manifest" href="img/site.webmanifest">
+  <meta name="theme-color" content="#0b0f15">
+  <script>
+    // set the theme before the page paints, so a light-theme visitor never sees a dark flash
+    try { document.documentElement.dataset.theme = localStorage.getItem('finmlops.theme') || 'dark'; } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="image" href="img/stonks.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="splash" id="splash" role="status" aria-live="polite">
+    <div class="splash-card">
+      <img class="splash-img" src="img/stonks.png" alt="Stonks meme: a man in a suit in front of a rising stock chart" width="320" height="240">
+      <div class="splash-brand">
+        <svg class="mark" viewBox="0 0 20 20" aria-hidden="true">
+          <defs><linearGradient id="splash-g" x1="0" y1="0" x2="20" y2="20"><stop stop-color="#4c8dff"/><stop offset="1" stop-color="#8a5cff"/></linearGradient></defs>
+          <rect width="20" height="20" rx="5" fill="url(#splash-g)"/>
+          <path d="M5 13.5l3.5-3.5 2.5 2.5L15 7.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        FinMLOps<span>Sentiment</span>
+      </div>
+      <div class="splash-bar"><i></i></div>
+      <p class="splash-msg" id="splash-msg">Loading market sentiment…</p>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
+      FinMLOps<span class="brand-sub">Sentiment</span>
+    </div>
+    <nav class="tabs">
+      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="headlines">News</button>
+      <button data-tab="analyzer">Analyzer</button>
+      <button data-tab="models">Models</button>
+      <span class="tab-ink" id="tab-ink"></span>
+    </nav>
+    <button id="omnibox" class="omnibox" type="button" aria-label="Open the command palette">
+      <svg class="omni-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span class="omni-text">Search tickers, headlines, actions…</span>
+      <kbd id="omni-kbd">Ctrl K</kbd>
+    </button>
+    <button class="icon-btn theme-btn" id="theme-btn" type="button" title="Switch theme" aria-label="Switch to the light theme"><svg class="ico-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ico-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 9.8A5.5 5.5 0 0 1 6.2 2.5a5.5 5.5 0 1 0 7.3 7.3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
+    <button class="icon-btn tour-btn" id="tour-btn" title="Take the tour" aria-label="Take the tour">?</button>
+    <div class="status" id="status"><span class="dot"></span>Connecting…</div>
+  </header>
+
+  <div class="stale" id="stale" role="status" hidden>
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l6.5 12h-13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span><b>Data is out of date.</b> <span id="stale-text"></span> Run the data pipeline, then <code>python -m frontend.server score</code>.</span>
+  </div>
+
+  <div class="layout">
+    <aside class="panel watchlist">
+      <div class="panel-head">Watchlist <span class="muted">Magnificent 7</span></div>
+      <div class="wl-row wl-cols"><span>Ticker</span><span>14D</span><span class="r">Net 7D</span><span class="r">Chg</span></div>
+      <ul id="watchlist"></ul>
+      <p class="wl-foot">Net sentiment = % positive − % negative articles, labeled by the champion model. Change is vs the 7 days before.</p>
+      <p class="wl-foot wl-asof" id="as-of"></p>
+    </aside>
+
+    <main>
+      <!-- dashboard -->
+      <section id="view-dashboard" class="view active">
+        <div class="panel quote">
+          <div class="quote-id">
+            <span id="q-logo"></span>
+            <div>
+              <div class="sym" id="q-sym">—</div>
+              <div class="name" id="q-name">&nbsp;</div>
+            </div>
+          </div>
+          <div class="quote-main">
+            <div class="big num" id="q-net">—</div>
+            <div class="quote-sub"><span id="q-chg"></span><span class="label">Net sentiment · 7D</span></div>
+          </div>
+          <div class="quote-stats" id="q-stats"></div>
+        </div>
+
+        <div class="grid">
+          <div class="panel chart-panel">
+            <div class="panel-head">
+              Daily sentiment
+              <div class="head-right">
+                <button class="toggle" id="price-toggle" hidden title="Show the daily closing price"><i></i>Price</button>
+                <div class="seg" id="range">
+                  <button data-days="7">1W</button>
+                  <button data-days="14">2W</button>
+                  <button data-days="30" class="active">1M</button>
+                  <button data-days="0">All</button>
+                </div>
+              </div>
+            </div>
+            <div class="chart-stats" id="chart-stats"></div>
+            <div class="chart-box main"><canvas id="chart-daily"></canvas></div>
+            <div class="chart-box vol"><canvas id="chart-volume"></canvas></div>
+          </div>
+        </div>
+
+        <div class="panel headlines-panel">
+          <div class="panel-head">Latest headlines <span class="muted" id="dash-count"></span>
+            <div class="head-right"><button class="link-btn" id="dash-all" type="button">View all →</button></div>
+          </div>
+          <div class="tbl-wrap"><table class="tbl" id="tbl-dash"></table></div>
+        </div>
+      </section>
+
+      <!-- news feed -->
+      <section id="view-headlines" class="view">
+        <div class="panel">
+          <div class="panel-head wrap">
+            News feed <span class="muted" id="news-count"></span>
+            <div class="filters">
+              <div class="seg" id="f-ticker"></div>
+              <div class="seg" id="f-label">
+                <button data-label="" class="active">All</button>
+                <button data-label="positive">Positive</button>
+                <button data-label="neutral">Neutral</button>
+                <button data-label="negative">Negative</button>
+              </div>
+              <input id="f-search" class="search" placeholder="Filter headlines…">
+            </div>
+          </div>
+          <div class="tbl-wrap"><table class="tbl" id="tbl-news"></table></div>
+        </div>
+      </section>
+
+      <!-- analyzer -->
+      <section id="view-analyzer" class="view">
+        <div class="grid an-grid">
+          <div class="panel">
+            <div class="panel-head">Headline analyzer <span class="muted">runs the champion model</span></div>
+            <form id="an-form" class="an-form">
+              <textarea id="an-text" rows="5" maxlength="500" placeholder="Paste a financial headline, e.g. “Nvidia beats revenue estimates as data center sales surge”"></textarea>
+              <div class="an-row">
+                <span class="muted small">Enter to analyze · Shift+Enter for a new line</span>
+                <button class="btn" type="submit">Analyze</button>
+              </div>
+            </form>
+            <div class="sub-head pad">Try one</div>
+            <div class="examples" id="examples"></div>
+          </div>
+          <div class="panel" id="an-result">
+            <div class="panel-head">Result</div>
+            <div class="empty">Paste a headline to see the label, the model's confidence, and which words drove it.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- models -->
+      <section id="view-models" class="view">
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-head">Model registry <span class="muted">finbert-sentiment</span></div>
+            <div class="tbl-wrap"><table class="tbl" id="tbl-models"></table></div>
+          </div>
+          <div class="side-col">
+            <div class="panel">
+              <div class="panel-head">Accuracy by ticker</div>
+              <div class="chart-box short"><canvas id="chart-models"></canvas></div>
+            </div>
+            <div class="panel">
+              <div class="panel-head">Promotion rule</div>
+              <ul class="rules">
+                <li><b>Validate.</b> Macro F1 of at least 0.60 on the evaluation set, or the run fails.</li>
+                <li><b>Beat the champion.</b> Higher macro F1, and no ticker more than 0.02 less accurate.</li>
+                <li><b>Ship it.</b> The new model is copied to cloud storage, then becomes the champion.</li>
+                <li><b>Otherwise roll back.</b> The current champion stays live.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footer">
+    <div><span>FinMLOps</span><span>FinBERT fine-tuned with LoRA</span><span>News from Finnhub and Marketaux</span></div>
+    <div><span>Sentiment is model output, not investment advice</span></div>
+  </footer>
+
+  <!-- headline detail panel -->
+  <div class="drawer-backdrop" id="drawer-backdrop"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="dr-meta" id="dr-meta"></div>
+      <div class="dr-nav">
+        <button class="icon-btn" id="dr-prev" aria-label="Previous headline" title="Previous (←)">‹</button>
+        <span class="small muted num" id="dr-pos"></span>
+        <button class="icon-btn" id="dr-next" aria-label="Next headline" title="Next (→)">›</button>
+        <button class="icon-btn" id="dr-close" aria-label="Close" title="Close (Esc)">✕</button>
+      </div>
+    </div>
+    <div class="drawer-body" id="dr-body"></div>
+  </aside>
+
+  <!-- command palette -->
+  <div class="palette" id="palette" hidden>
+    <div class="pal-backdrop" id="pal-backdrop"></div>
+    <div class="pal-box" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="pal-search">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="pal-input" placeholder="Search tickers, headlines, actions… or paste a headline" autocomplete="off" spellcheck="false"
+          role="combobox" aria-expanded="true" aria-controls="pal-list" aria-autocomplete="list">
+        <kbd>esc</kbd>
+      </div>
+      <div class="pal-list" id="pal-list" role="listbox"></div>
+      <div class="pal-foot">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> select</span><span><kbd>esc</kbd> close</span>
+        <span class="pal-count" id="pal-count"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- guided tour -->
+  <div class="tour" id="tour" hidden>
+    <div class="tour-layer"></div>
+    <div class="tour-spot" id="tour-spot"></div>
+    <div class="tour-pop" id="tour-pop" role="dialog" aria-labelledby="tour-title" aria-live="polite">
+      <div class="tour-body" id="tour-body">
+        <div class="tour-step" id="tour-step"></div>
+        <h3 id="tour-title"></h3>
+        <p id="tour-text"></p>
+      </div>
+      <div class="tour-actions">
+        <button class="tour-skip" id="tour-skip">Skip tour</button>
+        <div class="tour-btns">
+          <button class="btn ghost" id="tour-back">Back</button>
+          <button class="btn" id="tour-next">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "dvc[gs]>=3.67.1",
+    "fastapi>=0.162.5",
     "google-cloud-storage>=3.17.1",
     "matplotlib>=3.9",
     "mlflow>=3.18.0",
@@ -17,6 +18,8 @@ dependencies = [
     "shap>=0.54.1",
     "tqdm>=4.66",
     "transformers>=5.22.2",
+    "uvicorn>=0.54.0",
+    "yfinance>=1.8.0",
 ]
 
 # PyTorch comes in two builds; install exactly one:
