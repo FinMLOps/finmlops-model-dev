@@ -198,7 +198,7 @@ What we take from it:
 
 | Rubric point | Where |
 |---|---|
-| 8.1 Docker | [`Dockerfile`](../Dockerfile): Python 3.12 and the locked packages from `uv.lock`, CPU PyTorch; data, `.env` and the MLflow record are mounted at run time. `docker build -t finmlops-model .` takes about 2 minutes (a 5 GB image). |
+| 8.1 Docker | [`Dockerfile`](../Dockerfile): Python 3.12 and the locked packages from `uv.lock`, CPU PyTorch; data, `.env` and the MLflow record are mounted at run time. `docker build -t finmlops-model .` takes about 2 minutes (a 5 GB image). Running `python -m scripts.train baseline` in the container (CPU, 12 minutes) gave the same gold-set scores as on the Mac's GPU: macro F1 0.395, accuracy 0.433. |
 | 8.2 Loading data from the data pipeline | [`scripts/data.py`](../scripts/data.py), [`data/news.parquet.dvc`](../data/news.parquet.dvc) ([2.1](#21-loading-data-from-the-data-pipeline)) |
 | 8.3 Training and selecting the best model | [`scripts/train.py`](../scripts/train.py), [`scripts/pipeline.py`](../scripts/pipeline.py) ([2.2](#22-training-and-selecting-the-best-model), [4](#how-the-final-model-is-chosen)) |
 | 8.4 Model validation | [`scripts/evaluate.py`](../scripts/evaluate.py), [`scripts/benchmark.py`](../scripts/benchmark.py) ([2.3](#23-model-validation)) |
