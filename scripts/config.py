@@ -16,8 +16,11 @@ load_dotenv(ROOT / ".env")
 DATA_PATH = ROOT / "data" / "news.parquet"
 GOLD_PATH = ROOT / "data" / "gold.csv"  # hand labels; the set that decides promotion once it exists
 GOLD_TODO_PATH = ROOT / "data" / "gold_todo.csv"  # rows waiting to be hand-labeled (made by `scripts.data sample-gold`)
+LLM_LABELS_PATH = ROOT / "data" / "llm_labels.parquet"  # LLM labels for Finnhub rows (made by scripts.llm_labels)
 COLUMNS = ["id", "source", "publisher", "ticker", "title", "summary", "text", "published", "url", "sentiment_score"]
 TICKERS = {"AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA"}
+TICKER_NAMES = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "GOOGL": "Alphabet",
+                "META": "Meta Platforms", "AMZN": "Amazon", "TSLA": "Tesla"}
 LABELS = ["negative", "neutral", "positive"]
 LABEL_THRESHOLD = 0.15  # Marketaux score above +x is positive, below -x negative
 THRESHOLDS = [0.10, LABEL_THRESHOLD, 0.25]  # cut-offs we compare, to show how much this choice matters
@@ -26,10 +29,14 @@ VAL_FRAC = 0.1  # latest share of the pre-benchmark news used for validation
 # Rows after TEST_END are ignored until we deliberately re-cut the benchmark with new dates.
 TEST_START = pd.Timestamp("2026-11-06", tz="UTC")
 TEST_END = pd.Timestamp("2026-11-12", tz="UTC")
-# gold set: Finnhub rows per ticker (never trained on), plus Marketaux benchmark rows per ticker
-# so we can measure how often Marketaux's score agrees with our hand labels
+# gap between training and test: news from the last EMBARGO before TEST_START is used for neither, so a story that
+# breaks the day before the test window can't end up on both sides
+EMBARGO = pd.Timedelta(hours=24)
+# gold set, all from the test window: mostly Finnhub (what users see), plus Marketaux rows so we can measure how often
+# Marketaux's score agrees with our hand labels. GOLD_SHARED of the rows get a second annotator, for agreement.
 GOLD_FINNHUB_PER_TICKER = 100
 GOLD_MARKETAUX_PER_TICKER = 15
+GOLD_SHARED = 0.15
 
 # model and training
 BASE = "ProsusAI/finbert"
@@ -45,6 +52,18 @@ EVAL_BATCH_SIZE = 32
 N_TRIALS = 10  # Optuna trials per `tune`
 SHAP_ROWS = 100  # headlines SHAP explains in analysis.py (slow without a GPU)
 
+# LLM labels for the unlabeled Finnhub rows (scripts/llm_labels.py); used for training only if they agree with the
+# gold set at least as well as Marketaux's labels do
+LLM_MODEL = "gemini-3.5-flash"  # override with LLM_MODEL in .env (2.5 models are closed to new keys)
+LLM_BATCH = 25  # headlines per request
+USE_LLM_LABELS = True
+LLM_MIN_KAPPA = 0.6  # "substantial" agreement; the bar when Marketaux's own agreement can't be measured
+
+# slice analysis (scripts/slices.py): metrics per ticker, source, publisher, length; warn when slices drift apart
+MIN_SLICE_ROWS = 20  # smaller slices are too noisy to judge
+MAX_SLICE_GAP = 0.15  # accuracy gap between the best and worst slice that triggers a warning
+TOP_PUBLISHERS = 5
+
 # tracking
 REGISTRY_NAME = "finbert-sentiment"
 STUDY = "finbert-lora"
@@ -54,6 +73,8 @@ STORAGE = f"sqlite:///{ROOT / 'optuna.db'}"  # Optuna study, read again by analy
 # promotion
 MIN_F1 = 0.6  # a challenger below this macro F1 fails validation
 TOLERANCE = 0.02  # a challenger may be this much worse on a ticker (small slices are noisy)
+BOOTSTRAP_ROUNDS = 1000  # resamples for the confidence interval on the macro F1 gain
+CONFIDENCE = 0.95  # the challenger is promoted only if the lower end of this interval is above zero
 
 
 def setup_logging():

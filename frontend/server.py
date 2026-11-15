@@ -23,8 +23,8 @@ from mlflow import MlflowClient
 from pydantic import BaseModel
 
 from scripts import hardware, registry
-from scripts.config import ROOT
-from scripts.data import load_news
+from scripts.config import ROOT, TICKER_NAMES
+from scripts.data import load_news, model_input
 from scripts.evaluate import predict_probs
 
 STATIC = Path(__file__).parent / "static"
@@ -67,7 +67,7 @@ def score_news():
     """label every article with the champion and cache it, so the dashboard never runs the model per page load"""
     model, tokenizer = champion()
     df = load_news()
-    probs = predict_probs(model, tokenizer, df["text"].tolist())
+    probs = predict_probs(model, tokenizer, model_input(df))  # per ticker: "NVDA (NVIDIA): ..."
     df["pred"] = [model.config.id2label[i] for i in probs.argmax(dim=-1).tolist()]
     df["confidence"] = probs.max(dim=-1).values.tolist()
     df["version"] = registry.champion_version()
@@ -184,6 +184,7 @@ def headlines(ticker: str = "", label: str = "", q: str = "", limit: int = 50):
 
 class Headline(BaseModel):
     text: str
+    ticker: str = ""  # optional: score the headline for this company, the way the dashboard does
 
 
 @app.post("/api/predict")
@@ -199,6 +200,9 @@ def analyze(body: Headline):
     except Exception as exc:
         raise HTTPException(503, f"No champion model in the registry yet ({exc})")
     texts = [" ".join(words)] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
+    if body.ticker.upper() in TICKER_NAMES:
+        prefix = f"{body.ticker.upper()} ({TICKER_NAMES[body.ticker.upper()]}): "
+        texts = [prefix + t for t in texts]
     probs = predict_probs(model, tokenizer, texts)
     labels = [model.config.id2label[i].lower() for i in range(probs.shape[1])]
     score = probs[:, labels.index("positive")] - probs[:, labels.index("negative")]

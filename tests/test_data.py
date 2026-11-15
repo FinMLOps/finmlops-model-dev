@@ -53,8 +53,8 @@ def test_split_by_date_never_mixes_past_and_future(make_news):
     df = make_news([{"id": str(i), "published": d} for i, d in enumerate(days)])
     train, val = data.split_by_date(df, val_frac=0.2)
     assert train["published"].max() < val["published"].min()
-    assert val["published"].max() < data.TEST_START  # the benchmark window and later never reach training
-    assert len(train) + len(val) == 5
+    assert val["published"].max() < data.TEST_START - data.EMBARGO  # the gap and the test window never reach training
+    assert len(train) + len(val) == 4  # 5 Nov 00:00 falls inside the 24h gap
     with pytest.raises(ValueError, match="nothing to train on"):
         data.split_by_date(df[df["published"] >= data.TEST_START])
 
@@ -111,20 +111,23 @@ def test_load_gold_rejects_bad_files(tmp_path, monkeypatch, make_news, rows, err
 
 
 def test_sample_gold(tmp_path, monkeypatch, make_news):
-    rows = [{"id": f"f{i}", "source": "finnhub", "ticker": t} for t in ["AAPL", "MSFT"] for i in range(5)]
+    rows = [{"id": f"f{i}", "source": "finnhub", "ticker": t, "published": "2026-11-07"}
+            for t in ["AAPL", "MSFT"] for i in range(5)]
+    rows += [{"id": "f-early", "source": "finnhub", "published": "2026-10-01"}]  # training period: never gold
     rows += [{"id": "m-in", "published": "2026-11-07"}, {"id": "m-early", "published": "2026-10-01"}]
     monkeypatch.setattr(data, "load_news", lambda: make_news(rows))
     path = tmp_path / "todo.csv"
     out = data.sample_gold(n_finnhub=3, n_marketaux=2, path=path)
     finnhub = out[out["id"].str.startswith("f")]
     assert finnhub["ticker"].value_counts().to_dict() == {"AAPL": 3, "MSFT": 3}
-    assert "m-in" in set(out["id"]) and "m-early" not in set(out["id"])
-    assert list(out.columns) == ["id", "ticker", "title", "summary", "label", "mixed_signal"]
-    assert pd.read_csv(path).shape == (7, 6)
+    assert "m-in" in set(out["id"]) and not {"m-early", "f-early"} & set(out["id"])
+    assert list(out.columns) == ["id", "ticker", "title", "summary", "shared", "label", "label_2", "mixed_signal"]
+    assert (out["shared"] == "1").sum() == 1  # 15% of 7 rows get a second annotator
+    assert pd.read_csv(path).shape == (7, 8)
 
 
 def test_sample_gold_never_overwrites_labels_by_accident(tmp_path, monkeypatch, make_news):
-    monkeypatch.setattr(data, "load_news", lambda: make_news([{"source": "finnhub"}]))
+    monkeypatch.setattr(data, "load_news", lambda: make_news([{"source": "finnhub", "published": "2026-11-07"}]))
     path = tmp_path / "todo.csv"
     path.write_text("half-labeled work")
     with pytest.raises(FileExistsError, match="--force"):
@@ -132,3 +135,27 @@ def test_sample_gold_never_overwrites_labels_by_accident(tmp_path, monkeypatch, 
     assert path.read_text() == "half-labeled work"
     data.sample_gold(path=path, force=True)
     assert path.read_text().startswith("id,ticker")
+
+
+def test_model_input_names_the_company(make_news):
+    df = make_news([{"ticker": "NVDA", "text": "Chips sell out"}, {"ticker": "AAPL", "title": "Apple event"}])
+    assert data.model_input(df) == ["NVDA (NVIDIA): Chips sell out", "AAPL (Apple): t s"]
+    assert data.model_input(df, "title")[1] == "AAPL (Apple): Apple event"
+
+
+def test_drop_leaks_matches_the_same_story_across_sources(make_news):
+    train = make_news([{"id": "1", "title": "Apple Beats Estimates!", "url": "a"},
+                       {"id": "2", "title": "Other news", "url": "same-url"},
+                       {"id": "3", "title": "Unrelated", "url": "c"}])
+    test = make_news([{"title": "apple beats estimates", "url": "x"}, {"title": "Different", "url": "same-url"}])
+    assert data.drop_leaks(train, test, None)["id"].tolist() == ["3"]
+
+
+def test_load_gold_reads_the_second_annotator(tmp_path, monkeypatch, make_news):
+    monkeypatch.setattr(data, "load_news", lambda: make_news([{"id": "1"}, {"id": "2"}]))
+    path = tmp_path / "gold.csv"
+    path.write_text("id,ticker,shared,label,label_2,mixed_signal\n1,AAPL,1,positive, Neutral ,\n2,AAPL,,negative,,\n")
+    assert data.load_gold(path)["label_2"].tolist() == ["neutral", ""]
+    path.write_text("id,ticker,shared,label,label_2,mixed_signal\n1,AAPL,1,positive,great,\n")
+    with pytest.raises(ValueError, match="label_2"):
+        data.load_gold(path)

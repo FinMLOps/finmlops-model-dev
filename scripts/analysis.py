@@ -19,7 +19,7 @@ from transformers import pipeline
 from scripts import hardware, registry
 from scripts.benchmark import load_eval
 from scripts.config import LABELS, OUT_DIR, SHAP_ROWS, STORAGE, setup_logging
-from scripts.data import study_name
+from scripts.data import model_input, study_name
 from scripts.evaluate import metrics, predict
 
 log = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def word_importance(model, tokenizer, texts, out_dir=SENSITIVITY_DIR):
 
 def input_fields(model, tokenizer, df):
     """does the summary help? macro F1 on the title only vs title + summary"""
-    return {col: metrics(df.assign(pred=predict(model, tokenizer, df[col].tolist())))["f1_macro"]
+    return {col: metrics(df.assign(pred=predict(model, tokenizer, model_input(df, col))))["f1_macro"]
             for col in ["title", "text"]}
 
 
@@ -86,7 +86,7 @@ def sensitivity(version=None, n_shap=SHAP_ROWS):
     model, tokenizer = registry.load(version)
     df = load_eval()
     log.info("SHAP on %d headlines (slow without a GPU)", min(n_shap, len(df)))
-    word_importance(model, tokenizer, df["text"].tolist()[:n_shap])
+    word_importance(model, tokenizer, model_input(df)[:n_shap])
     results = {"f1_by_input": input_fields(model, tokenizer, df)}
     del model
     hardware.free_memory()

@@ -10,9 +10,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from scripts.config import (COLUMNS, DATA_PATH, GOLD_FINNHUB_PER_TICKER, GOLD_MARKETAUX_PER_TICKER, GOLD_PATH,
-                            GOLD_TODO_PATH, LABEL_THRESHOLD, LABELS, SEED, STUDY, TEST_END, TEST_START, TICKERS,
-                            VAL_FRAC, setup_logging)
+from scripts.config import (COLUMNS, DATA_PATH, EMBARGO, GOLD_FINNHUB_PER_TICKER, GOLD_MARKETAUX_PER_TICKER,
+                            GOLD_PATH, GOLD_SHARED, GOLD_TODO_PATH, LABEL_THRESHOLD, LABELS, SEED, STUDY, TEST_END,
+                            TEST_START, TICKER_NAMES, TICKERS, VAL_FRAC, setup_logging)
 
 log = logging.getLogger(__name__)
 GOLD_COLUMNS = ["id", "ticker", "label", "mixed_signal"]
@@ -55,21 +55,35 @@ def score_to_label(score, threshold=LABEL_THRESHOLD):
     return "neutral"
 
 
+def model_input(df, col="text"):
+    """what the model reads: the ticker and company in front of the text, e.g. "NVDA (NVIDIA): Nvidia beats ...".
+
+    One article about two companies is two rows with the same text, and often a different sentiment for each
+    (good for NVDA, bad for AMD). Without the ticker the model would get the same input with two different labels.
+    """
+    return [f"{t} ({TICKER_NAMES.get(t, t)}): {x}" for t, x in zip(df["ticker"], df[col].fillna(""))]
+
+
+def title_key(titles):
+    """headlines normalized for matching the same story across sources (case, spacing, punctuation)"""
+    return titles.fillna("").str.lower().str.replace(r"[^a-z0-9 ]", "", regex=True).str.split().str.join(" ")
+
+
 def load_labeled(threshold=LABEL_THRESHOLD):
     """Marketaux rows of news.parquet that have a score, with a label; the score is dropped so it can't leak"""
     news = load_news()
     df = news[(news["source"] == "marketaux") & news["sentiment_score"].notna()].copy()
     df["label"] = df["sentiment_score"].map(lambda s: score_to_label(s, threshold))
-    return df.drop(columns="sentiment_score")
+    return df.drop(columns="sentiment_score").assign(label_source="marketaux")
 
 
 def split_by_date(df, val_frac=VAL_FRAC):
-    """train / validation from the news before TEST_START; validation is the latest val_frac of it.
+    """train / validation from the news before TEST_START - EMBARGO; validation is the latest val_frac of it.
     The benchmark window itself is the test set (see benchmark.py), so it never reaches training."""
-    # everything before the benchmark window; only this part is ever used for training or validation
-    early = df[df["published"] < TEST_START]
+    # everything before the benchmark window minus the gap; only this part is ever used for training or validation
+    early = df[df["published"] < TEST_START - EMBARGO]
     if early.empty:
-        raise ValueError(f"no labeled rows before {TEST_START.date()}, so nothing to train on")
+        raise ValueError(f"no labeled rows before {(TEST_START - EMBARGO).date()}, so nothing to train on")
 
     # the timestamp that has (1 - val_frac) of the early rows before it, e.g. 90% of them for val_frac=0.1
     cut = early["published"].quantile(1 - val_frac)
@@ -89,6 +103,15 @@ def drop_gold(df, path=GOLD_PATH):
     gold = pd.read_csv(path, usecols=["id", "ticker"], dtype=str, keep_default_na=False)
     keys = set(zip(gold["id"].str.strip(), gold["ticker"].str.strip().str.upper()))
     return df[[key not in keys for key in zip(df["id"], df["ticker"])]]
+
+
+def drop_leaks(df, *held_out):
+    """remove rows that tell the same story as a held-out row (same headline or URL, from either source)"""
+    held = pd.concat([h[["title", "url"]] for h in held_out if h is not None and len(h)])
+    leak = title_key(df["title"]).isin(set(title_key(held["title"]))) | df["url"].isin(set(held["url"].dropna()))
+    if leak.any():
+        log.info("dropping %d training rows that repeat a test story", leak.sum())
+    return df[~leak]
 
 
 def data_snapshot():
@@ -114,7 +137,8 @@ def data_snapshot():
 
 def data_info():
     """which data and label rule a run used, so every run can be traced"""
-    return {"data_snapshot": data_snapshot(), "test_start": str(TEST_START.date()), "label_threshold": LABEL_THRESHOLD}
+    return {"data_snapshot": data_snapshot(), "test_start": str(TEST_START.date()), "label_threshold": LABEL_THRESHOLD,
+            "embargo_hours": EMBARGO.total_seconds() / 3600}
 
 
 def study_name():
@@ -129,24 +153,29 @@ def in_benchmark_window(df):
 
 def sample_gold(n_finnhub=GOLD_FINNHUB_PER_TICKER, n_marketaux=GOLD_MARKETAUX_PER_TICKER, path=GOLD_TODO_PATH,
                 force=False):
-    """write the rows to hand-label: n Finnhub articles per ticker plus up to n Marketaux benchmark rows per ticker.
+    """write the rows to hand-label, all from the test window (news the model never trains on):
+    n Finnhub articles per ticker (what users mostly see) plus up to n Marketaux rows per ticker.
 
     The source and Marketaux's score are left out on purpose so they can't sway whoever labels.
-    Fill in `label` (negative / neutral / positive) and `mixed_signal` (1 if the headline pulls both ways,
-    else leave empty), then save the file as data/gold.csv.
+    Fill in `label` (negative / neutral / positive) and `mixed_signal` (1 if the headline pulls both ways, else
+    leave empty). Rows marked `shared` also get a second person's label in `label_2`, labeled without looking at
+    `label`; that gives the annotator agreement. Save the file as data/gold.csv.
     """
     if path.exists() and not force:  # it may already hold hours of hand labels
         raise FileExistsError(f"{path.name} already exists and may hold labels; use --force to overwrite it")
     news = load_news()
-    finnhub = news[news["source"] == "finnhub"]
-    marketaux = news[(news["source"] == "marketaux") & news["sentiment_score"].notna() & in_benchmark_window(news)]
+    window = news[in_benchmark_window(news)]
+    finnhub = window[window["source"] == "finnhub"]
+    marketaux = window[(window["source"] == "marketaux") & window["sentiment_score"].notna()]
     parts = [g.sample(min(n, len(g)), random_state=SEED)
              for df, n in [(finnhub, n_finnhub), (marketaux, n_marketaux)]
              for _, g in df.groupby("ticker")]
     if not parts:
-        raise ValueError("no rows to sample from")
+        raise ValueError("no rows to sample from in the test window")
     out = pd.concat(parts).sample(frac=1, random_state=SEED)  # shuffled, so the order gives nothing away
-    out = out[["id", "ticker", "title", "summary"]].assign(label="", mixed_signal="")
+    out = out[["id", "ticker", "title", "summary"]].reset_index(drop=True)
+    shared = out.sample(frac=GOLD_SHARED, random_state=SEED).index
+    out = out.assign(shared=["1" if i in shared else "" for i in out.index], label="", label_2="", mixed_signal="")
     out.to_csv(path, index=False)
     return out
 
@@ -170,7 +199,15 @@ def load_gold(path=GOLD_PATH):
     duplicates = gold.duplicated(["id", "ticker"]).sum()
     if duplicates:
         raise ValueError(f"gold.csv has {duplicates} duplicate rows")
+    # optional second opinion on the shared rows; `label` stays the label we evaluate against
+    second = pd.read_csv(path, dtype=str, keep_default_na=False).get("label_2")
+    gold["label_2"] = second.str.strip().str.lower().values if second is not None else ""
+    bad = set(gold["label_2"]) - set(LABELS) - {""}
+    if bad:
+        raise ValueError(f"gold.csv has unknown labels in label_2: {sorted(bad)}")
     gold["mixed_signal"] = gold["mixed_signal"].str.lower().isin(YES)
+    raw = pd.read_csv(path, dtype=str, keep_default_na=False)
+    gold["labeled_by"] = raw["labeled_by"].str.strip().replace("", "human").values if "labeled_by" in raw else "human"
     df = gold.merge(load_news(), on=["id", "ticker"])
     if len(df) < len(gold):
         raise ValueError(f"{len(gold) - len(df)} gold rows are not in news.parquet (run `dvc update`?)")

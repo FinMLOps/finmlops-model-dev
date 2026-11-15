@@ -21,6 +21,6 @@ def make_news():
     """make_news([{...}, ...]) -> news.parquet-shaped DataFrame; each dict overrides the default row"""
     def make(rows):
         df = pd.DataFrame([{**ROW, **r} for r in rows])
-        df["published"] = pd.to_datetime(df["published"], utc=True)
+        df["published"] = pd.to_datetime(df["published"], utc=True, format="ISO8601")
         return df
     return make
