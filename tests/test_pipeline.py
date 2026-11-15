@@ -5,16 +5,20 @@ import pytest
 from scripts import pipeline
 
 OLD = {"f1_macro": 0.70, "accuracy_AAPL": 0.80}
+SURE_GAIN = (0.05, 0.01, 0.09)  # macro F1 gain and its confidence interval, all above zero
+CHANCE_GAIN = (0.05, -0.02, 0.11)  # same gain, but the interval includes zero
 
 
-@pytest.mark.parametrize("new, status", [
-    ({"f1_macro": 0.50, "accuracy_AAPL": 0.90}, "failed validation"),
-    ({"f1_macro": 0.69, "accuracy_AAPL": 0.90}, "kept champion"),
-    ({"f1_macro": 0.75, "accuracy_AAPL": 0.60}, "kept champion"),
-    ({"f1_macro": 0.75, "accuracy_AAPL": 0.80}, "promoted"),
+@pytest.mark.parametrize("new, gain, status, why", [
+    ({"f1_macro": 0.50, "accuracy_AAPL": 0.90}, SURE_GAIN, "failed validation", "below"),
+    ({"f1_macro": 0.75, "accuracy_AAPL": 0.90}, CHANCE_GAIN, "kept champion", "chance"),
+    ({"f1_macro": 0.75, "accuracy_AAPL": 0.60}, SURE_GAIN, "kept champion", "ticker"),
+    ({"f1_macro": 0.75, "accuracy_AAPL": 0.80}, SURE_GAIN, "promoted", "new champion"),
 ])
-def test_decide(new, status):
-    assert pipeline.decide(new, OLD, 2, 1)[0] == status
+def test_decide(new, gain, status, why):
+    result, message = pipeline.decide(new, OLD, 2, 1, gain)
+    assert result == status and why in message
+    assert "interval" in message
 
 
 def test_notify_skips_without_settings(monkeypatch):
@@ -39,6 +43,9 @@ def fake_run(monkeypatch, tmp_path):
     """everything heavy in pipeline.run replaced by fakes; returns the promote mock"""
     promote = MagicMock()
     monkeypatch.setattr(pipeline.analysis, "PLOTS_DIR", tmp_path / "plots")
+    monkeypatch.setattr(pipeline.slices, "SLICE_DIR", tmp_path / "slices")
+    monkeypatch.setattr(pipeline.slices, "report", lambda df, title: ({"ticker": 0.05}, []))
+    monkeypatch.setattr(pipeline, "f1_gain", lambda new_df, old_df: SURE_GAIN)
     monkeypatch.setattr(pipeline.registry, "setup", lambda: None)
     monkeypatch.setattr(pipeline.registry, "promote", promote)
     monkeypatch.setattr(pipeline, "train", lambda params: {"version": "2"})
@@ -102,3 +109,12 @@ def test_main_exits_with_1_when_validation_fails(monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         pipeline.main()
     assert exit_info.value.code == 1
+
+
+def test_run_warns_when_a_slice_falls_behind(monkeypatch, fake_run):
+    monkeypatch.setattr(pipeline.registry, "champion_version", lambda: "1")
+    monkeypatch.setattr(pipeline, "evaluate_version", scores({"1": OLD, "2": {"f1_macro": 0.8, "accuracy_AAPL": 0.9}}))
+    monkeypatch.setattr(pipeline.slices, "report", lambda df, title: ({"publisher": 0.3}, ["publisher"]))
+    status, message = pipeline.run()
+    assert status == "promoted"  # a warning, not a block
+    assert "warning" in message and "publisher" in message

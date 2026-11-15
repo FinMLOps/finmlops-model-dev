@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "dvc[gs]>=3.67.1",
+    "fairlearn>=0.15.0",
     "fastapi>=0.162.5",
     "google-cloud-storage>=3.17.1",
     "matplotlib>=3.9",

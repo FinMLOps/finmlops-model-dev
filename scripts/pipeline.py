@@ -17,10 +17,10 @@ from email.message import EmailMessage
 
 import mlflow
 
-from scripts import analysis, registry
+from scripts import analysis, registry, slices
 from scripts.benchmark import load_eval
-from scripts.config import MIN_F1, setup_logging
-from scripts.evaluate import evaluate_version, is_better
+from scripts.config import CONFIDENCE, MIN_F1, setup_logging
+from scripts.evaluate import evaluate_version, f1_gain, is_better
 from scripts.train import baseline, train, tune
 
 log = logging.getLogger(__name__)
@@ -49,14 +49,22 @@ def notify(subject, body):
     return True
 
 
-def decide(new, old, version, champion):
-    """the promotion rule on two metric dicts; returns (status, message)"""
+def decide(new, old, version, champion, gain):
+    """the promotion rule; gain = (macro F1 gain, low, high) from evaluate.f1_gain. Returns (status, message).
+
+    Promoted only if the challenger clears MIN_F1, its gain is above zero even at the low end of the confidence
+    interval (so it isn't luck of a small test set), and it is not worse than the champion for any ticker.
+    """
+    g, low, high = gain
     summary = (f"challenger v{version}: macro F1 {new['f1_macro']:.3f}\n"
-               f"champion v{champion}: macro F1 {old['f1_macro']:.3f}")
+               f"champion v{champion}: macro F1 {old['f1_macro']:.3f}\n"
+               f"gain {g:+.3f} ({CONFIDENCE:.0%} interval {low:+.3f} to {high:+.3f})")
     if new["f1_macro"] < MIN_F1:
         return "failed validation", f"macro F1 below {MIN_F1}\n{summary}"
+    if low <= 0:
+        return "kept champion", f"the gain could be chance, champion v{champion} stays (rollback)\n{summary}"
     if not is_better(new, old):
-        return "kept champion", f"challenger is not better, champion v{champion} stays (rollback)\n{summary}"
+        return "kept champion", f"challenger is worse for a ticker, champion v{champion} stays (rollback)\n{summary}"
     return "promoted", f"v{version} is the new champion\n{summary}"
 
 
@@ -74,18 +82,26 @@ def run(do_tune=False):
     df = load_eval()
     new, new_df = evaluate_version(version, df)
     old, old_df = evaluate_version(champion, df)
-    status, message = decide(new, old, version, champion)
+    gain = f1_gain(new_df, old_df)
+    status, message = decide(new, old, version, champion, gain)
 
-    shutil.rmtree(analysis.PLOTS_DIR, ignore_errors=True)  # so only this run's charts get logged
+    for folder in (analysis.PLOTS_DIR, slices.SLICE_DIR):  # so only this run's charts get logged
+        shutil.rmtree(folder, ignore_errors=True)
     analysis.plot_confusion(new_df, "challenger")
     analysis.plot_confusion(old_df, "champion")
     analysis.plot_compare({f"champion v{champion}": old, f"challenger v{version}": new})
+    gaps, flagged = slices.report(new_df, f"challenger v{version}")  # bias check: every slice of the eval set
+    if flagged:
+        message += f"\nwarning: accuracy differs a lot across {', '.join(flagged)} (see the slice report in MLflow)"
     with mlflow.start_run(run_name=f"select-v{version}"):
         mlflow.set_tag("decision", status)
-        mlflow.log_params({"challenger": version, "champion": champion})
+        mlflow.log_params({"challenger": version, "champion": champion, "slices_flagged": ", ".join(flagged) or "none"})
         mlflow.log_metrics({f"challenger_{k}": v for k, v in new.items()})
         mlflow.log_metrics({f"champion_{k}": v for k, v in old.items()})
+        mlflow.log_metrics({"f1_gain": gain[0], "f1_gain_low": gain[1], "f1_gain_high": gain[2]})
+        mlflow.log_metrics({f"slice_gap_{k}": v for k, v in gaps.items()})
         mlflow.log_artifacts(str(analysis.PLOTS_DIR), "plots")
+        mlflow.log_artifacts(str(slices.SLICE_DIR), "slices")
 
     if status == "promoted":
         # copy to GCS before moving the alias: if the upload fails, the old champion simply stays

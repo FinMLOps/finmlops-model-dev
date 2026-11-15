@@ -57,3 +57,25 @@ def test_predict_batches_and_maps_labels():
     assert torch.allclose(probs.sum(dim=1), torch.ones(3))
     assert predict(FakeModel(), FakeTokenizer(), texts) == ["positive", "negative", "positive"]
     assert predict_probs(FakeModel(), FakeTokenizer(), []).shape == (0, 3)
+
+
+def test_macro_f1_matches_sklearn():
+    import numpy as np
+    from sklearn.metrics import f1_score
+
+    from scripts.evaluate import macro_f1
+    y, p = np.array([0, 1, 2, 2, 1, 0, 2]), np.array([0, 2, 2, 1, 1, 0, 2])
+    assert np.isclose(macro_f1(y, p, 3), f1_score(y, p, average="macro"))
+
+
+def test_f1_gain_interval():
+    from scripts.evaluate import f1_gain
+    labels = ["negative", "neutral", "positive"] * 100
+    old = pd.DataFrame({"label": labels, "pred": ["neutral"] * 300})  # always neutral
+    new = pd.DataFrame({"label": labels, "pred": labels})  # always right
+    gain, low, high = f1_gain(new, old)
+    assert low > 0 and low <= gain <= high  # a clear win stays a win at the low end
+    gain, low, high = f1_gain(old, old)
+    assert gain == low == high == 0  # the same model gains nothing
+    with pytest.raises(ValueError, match="same rows"):
+        f1_gain(new, old.iloc[:10])
