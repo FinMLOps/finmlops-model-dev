@@ -97,7 +97,7 @@ def split_by_date(df, val_frac=VAL_FRAC):
 
 
 def drop_gold(df, path=GOLD_PATH):
-    """remove hand-labeled rows, so the gold set can never leak into training"""
+    """remove gold rows, so the gold set can never leak into training"""
     if not path.exists():
         return df
     gold = pd.read_csv(path, usecols=["id", "ticker"], dtype=str, keep_default_na=False)
@@ -181,7 +181,7 @@ def sample_gold(n_finnhub=GOLD_FINNHUB_PER_TICKER, n_marketaux=GOLD_MARKETAUX_PE
 
 
 def load_gold(path=GOLD_PATH):
-    """hand labels (id, ticker, label, mixed_signal) joined with news.parquet for the text and everything else.
+    """gold labels (id, ticker, label, mixed_signal) joined with news.parquet for the text and everything else.
     Forgiving about typing ("Positive ", "yes") and strict about content (missing or unknown labels, duplicates)."""
     gold = pd.read_csv(path, dtype=str, keep_default_na=False)
     missing = set(GOLD_COLUMNS) - set(gold.columns)

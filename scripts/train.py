@@ -10,6 +10,7 @@ TORCH_DEVICE=cpu (or mps, cuda) forces one; see hardware.py.
 
 import logging
 import math
+import os
 import sys
 
 import mlflow
@@ -67,6 +68,8 @@ def baseline():
         mlflow.log_metrics({**results, **extra})
         version = registry.log_model(model, tokenizer)
     if registry.champion_version() is None:
+        if os.getenv("MODEL_BUCKET"):  # same order as a promotion: copy to GCS first, then move the alias
+            log.info("copied pretrained FinBERT to %s", registry.push_to_gcs(version))
         registry.promote(version)
         log.info("pretrained FinBERT is v%s, the first champion", version)
     return results

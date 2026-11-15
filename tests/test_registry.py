@@ -68,3 +68,17 @@ def test_push_to_gcs_uploads_every_file(tmp_path, monkeypatch):
     assert uploaded == ["models/finbert-sentiment/v3/config.json", "models/finbert-sentiment/v3/sub/weights.bin"]
     with pytest.raises(ValueError, match="MODEL_BUCKET"):
         registry.push_to_gcs("3")
+
+
+def test_cli_pushes_the_champion_by_default(monkeypatch, capsys):
+    monkeypatch.setattr(registry, "setup", lambda: None)
+    monkeypatch.setattr(registry, "champion_version", lambda: "2")
+    pushed = []
+    monkeypatch.setattr(registry, "push_to_gcs", lambda v: pushed.append(v) or f"gs://b/models/finbert-sentiment/v{v}")
+    registry.main(["push"])
+    registry.main(["push", "5"])
+    assert pushed == ["2", "5"]
+    assert "v2 -> gs://b/models/finbert-sentiment/v2" in capsys.readouterr().out
+    for bad in ([], ["pull"], ["push", "x"]):
+        with pytest.raises(SystemExit):
+            registry.main(bad)

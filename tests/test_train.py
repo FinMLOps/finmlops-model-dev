@@ -138,3 +138,22 @@ def test_llm_labels_join_training_only_when_they_pass_the_gold_check(tmp_path, m
     monkeypatch.setattr(train.llm_labels, "agreement", lambda gold: {"kappa": 0.99})
     tr, va, info = train.training_data()
     assert set(pd.concat([tr, va])["label_source"]) == {"marketaux"}
+
+
+@pytest.mark.parametrize("bucket", ["", "my-bucket"])
+def test_the_first_champion_is_copied_to_gcs_before_promotion(monkeypatch, bucket):
+    calls = []
+    monkeypatch.setattr(train, "load_tokenizer", lambda: Tokenizer())
+    monkeypatch.setattr(train, "load_base", lambda: Model())
+    monkeypatch.setattr(train, "GOLD_PATH", MagicMock(exists=lambda: False))
+    monkeypatch.setattr(train.benchmark, "get", lambda: headlines())
+    monkeypatch.setattr(train.benchmark, "report", lambda df: {})
+    monkeypatch.setattr(train, "data_info", lambda: {})
+    monkeypatch.setattr(train.registry, "setup", lambda: None)
+    monkeypatch.setattr(train.registry, "log_model", lambda m, t: "1")
+    monkeypatch.setattr(train.registry, "champion_version", lambda: None)
+    monkeypatch.setattr(train.registry, "push_to_gcs", lambda v: calls.append(("push", v)) or "gs://b/v1")
+    monkeypatch.setattr(train.registry, "promote", lambda v: calls.append(("promote", v)))
+    monkeypatch.setenv("MODEL_BUCKET", bucket)
+    train.baseline()
+    assert calls == ([("push", "1")] if bucket else []) + [("promote", "1")]

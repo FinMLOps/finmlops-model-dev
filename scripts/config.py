@@ -14,7 +14,7 @@ load_dotenv(ROOT / ".env")
 
 # data
 DATA_PATH = ROOT / "data" / "news.parquet"
-GOLD_PATH = ROOT / "data" / "gold.csv"  # hand labels; the set that decides promotion once it exists
+GOLD_PATH = ROOT / "data" / "gold.csv"  # gold labels (currently LLM-labeled, see its labeled_by column); decides promotion
 GOLD_TODO_PATH = ROOT / "data" / "gold_todo.csv"  # rows waiting to be hand-labeled (made by `scripts.data sample-gold`)
 LLM_LABELS_PATH = ROOT / "data" / "llm_labels.parquet"  # LLM labels for Finnhub rows (made by scripts.llm_labels)
 COLUMNS = ["id", "source", "publisher", "ticker", "title", "summary", "text", "published", "url", "sentiment_score"]
@@ -33,7 +33,7 @@ TEST_END = pd.Timestamp("2026-11-12", tz="UTC")
 # breaks the day before the test window can't end up on both sides
 EMBARGO = pd.Timedelta(hours=24)
 # gold set, all from the test window: mostly Finnhub (what users see), plus Marketaux rows so we can measure how often
-# Marketaux's score agrees with our hand labels. GOLD_SHARED of the rows get a second annotator, for agreement.
+# Marketaux's score agrees with the gold labels. GOLD_SHARED of the rows get a second annotator, for agreement.
 GOLD_FINNHUB_PER_TICKER = 100
 GOLD_MARKETAUX_PER_TICKER = 15
 GOLD_SHARED = 0.15
