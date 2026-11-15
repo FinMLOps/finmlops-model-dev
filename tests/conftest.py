@@ -16,6 +16,18 @@ def clean_env(monkeypatch):
     monkeypatch.setenv("TORCH_DEVICE", "cpu")
 
 
+@pytest.fixture(autouse=True)
+def experiments_off(monkeypatch):
+    """the GOLD_SPLIT and CLASS_WEIGHTS settings are read when config.py is imported, so a developer's .env could turn
+    them on; tests always start from the defaults and switch them on themselves"""
+    from scripts import benchmark, data, train
+    for module in (data, benchmark, train):
+        monkeypatch.setattr(module, "GOLD_SPLIT", None)
+    for module in (data, train):
+        monkeypatch.setattr(module, "GOLD_SPLIT_MARKETAUX", False)
+        monkeypatch.setattr(module, "CLASS_WEIGHTS", True)
+
+
 @pytest.fixture
 def make_news():
     """make_news([{...}, ...]) -> news.parquet-shaped DataFrame; each dict overrides the default row"""

@@ -75,6 +75,10 @@ def test_data_snapshot_and_study_name(tmp_path, monkeypatch):
     dvc.write_text("deps:\n- path: x\n  repo:\n    url: u\n    rev_lock: 399df0baf5ad2aed\n")
     assert data.data_snapshot() == "399df0ba"
     assert data.study_name() == "finbert-lora-399df0ba-thr15"
+    monkeypatch.setattr(data, "GOLD_SPLIT", pd.Timestamp("2026-11-10", tz="UTC"))
+    monkeypatch.setattr(data, "GOLD_SPLIT_MARKETAUX", True)
+    monkeypatch.setattr(data, "CLASS_WEIGHTS", False)
+    assert data.study_name() == "finbert-lora-399df0ba-thr15-gold20261110mx-nocw"
     dvc.write_text("outs: []\n")
     with pytest.raises(ValueError, match="rev_lock"):
         data.data_snapshot()
@@ -159,3 +163,21 @@ def test_load_gold_reads_the_second_annotator(tmp_path, monkeypatch, make_news):
     path.write_text("id,ticker,shared,label,label_2,mixed_signal\n1,AAPL,1,positive,great,\n")
     with pytest.raises(ValueError, match="label_2"):
         data.load_gold(path)
+
+
+def test_split_gold_trains_on_older_rows_and_keeps_the_newest_unseen(monkeypatch, make_news):
+    gold = make_news([
+        {"id": "old", "title": "old story", "url": "u1", "published": "2026-11-07"},
+        {"id": "repeat", "title": "Same Story!", "url": "u2", "published": "2026-11-07"},
+        {"id": "gap", "title": "gap story", "url": "u3", "published": "2026-11-09T12:00"},
+        {"id": "new", "title": "same story", "url": "u4", "published": "2026-11-10T08:00"},
+    ])
+    train, val, test = data.split_gold(gold, split=pd.Timestamp("2026-11-10", tz="UTC"))
+    assert train["id"].tolist() == ["old"]  # "repeat" tells the same story as a test row
+    assert val["id"].tolist() == ["gap"]  # the day before the split: validation, and the gap to the test rows
+    assert test["id"].tolist() == ["new"]
+    with pytest.raises(ValueError, match="every part"):
+        data.split_gold(gold, split=pd.Timestamp("2026-11-20", tz="UTC"))
+    monkeypatch.setattr(data, "GOLD_SPLIT", None)
+    with pytest.raises(ValueError, match="set GOLD_SPLIT"):
+        data.split_gold(gold)

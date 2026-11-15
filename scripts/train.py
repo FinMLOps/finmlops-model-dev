@@ -22,11 +22,11 @@ from tqdm import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup, set_seed
 
 from scripts import benchmark, hardware, llm_labels, registry
-from scripts.config import (BASE, BASE_REVISION, DEFAULTS, GOLD_PATH, LABELS, LLM_LABELS_PATH, MAX_GRAD_NORM,
-                            MAX_LENGTH, N_TRIALS, SEED, STORAGE, USE_LLM_LABELS, WARMUP_FRAC, WEIGHT_DECAY,
-                            setup_logging)
+from scripts.config import (BASE, BASE_REVISION, CLASS_WEIGHTS, DEFAULTS, GOLD_PATH, GOLD_SPLIT, GOLD_SPLIT_MARKETAUX,
+                            LABELS, LLM_LABELS_PATH, MAX_GRAD_NORM, MAX_LENGTH, N_TRIALS, SEED, STORAGE, USE_LLM_LABELS,
+                            WARMUP_FRAC, WEIGHT_DECAY, setup_logging)
 from scripts.data import (data_info, drop_gold, drop_leaks, load_gold, load_labeled, model_input, split_by_date,
-                          study_name)
+                          split_gold, study_name)
 from scripts.evaluate import metrics, predict
 
 log = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ def fit(model, tokenizer, train_df, val_df, p):
     label2id = {name.lower(): i for name, i in model.config.label2id.items()}
     texts = model_input(train_df)
     labels = torch.tensor([label2id[label] for label in train_df["label"]])
-    weight = class_weights(labels, len(label2id)).to(dev)
+    weight = class_weights(labels, len(label2id)).to(dev) if CLASS_WEIGHTS else None
 
     trainable = [w for w in model.parameters() if w.requires_grad]
     opt = torch.optim.AdamW(trainable, lr=p["lr"], weight_decay=WEIGHT_DECAY)
@@ -145,9 +145,24 @@ def fit(model, tokenizer, train_df, val_df, p):
     return model
 
 
+def gold_training_data():
+    """(train, validation, info) for the GOLD_SPLIT experiment: the older gold rows train, the ones in the embargo
+    before GOLD_SPLIT validate; with GOLD_SPLIT_MARKETAUX the Marketaux training rows join the training set"""
+    gold_train, gold_val, gold_test = split_gold(load_gold())
+    train_df, val_df = gold_train.assign(label_source="gold"), gold_val.assign(label_source="gold")
+    if GOLD_SPLIT_MARKETAUX:
+        marketaux, _ = split_by_date(drop_gold(load_labeled()))
+        train_df = pd.concat([train_df, drop_leaks(marketaux, gold_test)], ignore_index=True)
+    sources = train_df["label_source"].value_counts()
+    return train_df, val_df, {"label_sources": ", ".join(f"{name}: {n}" for name, n in sources.items())}
+
+
 def training_data():
     """(train, validation, info). Marketaux rows, plus LLM-labeled Finnhub rows when those agree with the gold set at
-    least as well as Marketaux does; minus gold rows and any story that also appears in a test set; split by date."""
+    least as well as Marketaux does; minus gold rows and any story that also appears in a test set; split by date.
+    With GOLD_SPLIT set, the gold set's older rows instead (see gold_training_data)."""
+    if GOLD_SPLIT is not None and GOLD_PATH.exists():
+        return gold_training_data()
     rows, gold, info = load_labeled(), (load_gold() if GOLD_PATH.exists() else None), {}
     if USE_LLM_LABELS and LLM_LABELS_PATH.exists():
         if gold is None:
@@ -177,11 +192,12 @@ def train(params=None, save=True, run_name="lora"):
     p = {**DEFAULTS, **(params or {})}
     set_seed(SEED)  # before the model is built: LoRA's starting weights are random
     train_df, val_df, info = training_data()
-    test_df = benchmark.get()
+    # with GOLD_SPLIT the frozen benchmark overlaps the gold training rows, so the held-out gold rows are the test set
+    test_df = benchmark.load_eval() if GOLD_SPLIT is not None and GOLD_PATH.exists() else benchmark.get()
     dev = hardware.device()
     tokenizer = load_tokenizer()
     with mlflow.start_run(run_name=run_name, nested=True) as run:
-        mlflow.log_params({**p, "train_rows": len(train_df), "val_rows": len(val_df), "test_rows": len(test_df),
+        mlflow.log_params({**p, "class_weights": CLASS_WEIGHTS, "train_rows": len(train_df), "val_rows": len(val_df), "test_rows": len(test_df),
                            "max_length": MAX_LENGTH, **info, **data_info(), **hardware.info(dev)})
         model = fit(build_model(p), tokenizer, train_df, val_df, p)
         results = {}

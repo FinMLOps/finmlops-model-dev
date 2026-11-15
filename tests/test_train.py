@@ -138,3 +138,42 @@ def test_llm_labels_join_training_only_when_they_pass_the_gold_check(tmp_path, m
     monkeypatch.setattr(train.llm_labels, "agreement", lambda gold: {"kappa": 0.99})
     tr, va, info = train.training_data()
     assert set(pd.concat([tr, va])["label_source"]) == {"marketaux"}
+
+
+def test_gold_split_trains_on_the_older_gold_rows(tmp_path, monkeypatch, make_news):
+    from scripts import data
+
+    story = lambda i, day: {"id": i, "title": f"story {i}", "url": f"https://news/{i}", "published": day}
+    gold = make_news([story("g1", "2026-11-07"), story("g2", "2026-11-09T12:00"),
+                      story("g3", "2026-11-10T08:00")]).assign(label="neutral")
+    marketaux = make_news([story("m", "2026-10-10"), story("m2", "2026-10-20")])
+    monkeypatch.setattr(train, "load_gold", lambda: gold)
+    monkeypatch.setattr(train, "load_labeled", lambda: marketaux.assign(label="positive", label_source="marketaux"))
+    monkeypatch.setattr(train, "drop_gold", lambda df: df)
+    monkeypatch.setattr(train, "GOLD_PATH", tmp_path / "gold.csv")
+    (tmp_path / "gold.csv").write_text("exists")
+    split = pd.Timestamp("2026-11-10", tz="UTC")
+    monkeypatch.setattr(train, "GOLD_SPLIT", split)
+    monkeypatch.setattr(data, "GOLD_SPLIT", split)
+
+    tr, va, info = train.training_data()
+    assert tr["id"].tolist() == ["g1"] and va["id"].tolist() == ["g2"]  # g3 is the eval set
+    assert info["label_sources"] == "gold: 1"
+    monkeypatch.setattr(train, "GOLD_SPLIT_MARKETAUX", True)
+    tr, va, info = train.training_data()
+    assert set(tr["label_source"]) == {"gold", "marketaux"} and va["id"].tolist() == ["g2"]
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_class_weights_can_be_turned_off(monkeypatch, on):
+    seen = []
+    real = train.F.cross_entropy
+
+    def spy(logits, target, weight=None):
+        seen.append(weight)
+        return real(logits, target, weight=weight)
+
+    monkeypatch.setattr(train.F, "cross_entropy", spy)
+    monkeypatch.setattr(train, "CLASS_WEIGHTS", on)
+    train.fit(Model(), Tokenizer(), headlines(), headlines(), {**P, "epochs": 1})
+    assert all((w is not None) == on for w in seen)
