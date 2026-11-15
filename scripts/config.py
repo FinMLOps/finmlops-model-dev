@@ -50,7 +50,7 @@ MAX_GRAD_NORM = 1.0  # gradient clipping, so one bad batch can't throw the weigh
 MIXED_PRECISION = True  # bf16 / fp16 training on NVIDIA GPUs only; Apple Silicon and CPU always train in fp32
 EVAL_BATCH_SIZE = 32
 N_TRIALS = 10  # Optuna trials per `tune`
-SHAP_ROWS = 100  # headlines SHAP explains in analysis.py (slow without a GPU)
+SHAP_ROWS = 30  # headlines SHAP explains in analysis.py (each costs hundreds of model passes; slow on CPU)
 
 # LLM labels for the unlabeled Finnhub rows (scripts/llm_labels.py); used for training only if they agree with the
 # gold set at least as well as Marketaux's labels do
