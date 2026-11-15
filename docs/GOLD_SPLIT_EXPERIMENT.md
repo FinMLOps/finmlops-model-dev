@@ -54,6 +54,50 @@ Every run fails validation (macro F1 below 0.6), and every interval includes zer
   If the team cares more about accuracy than macro F1, the unweighted model is far better than the champion on
   accuracy, but the promotion rule uses macro F1.
 
+## Is the fine-tune still biased?
+
+Yes, but differently. Training on gold-style labels removes the positive bias that came from Marketaux. With class
+weights the model then calls too many neutral headlines positive or negative; without them it misses most positive
+and negative news. Same 262 eval rows:
+
+**Which label each model leans towards**
+
+| Model | Predicted neg / neutral / pos | Neutral called pos/neg | Pos/neg called neutral | Main problem |
+|---|---|---|---|---|
+| **true labels** | 9% / 76% / 15% | | | |
+| champion: pretrained FinBERT | 34% / 42% / 24% | 54% | 30% | over-reacts, too often negative |
+| Marketaux-trained (v3, normal pipeline) | 23% / 23% / **54%** | 74% | 13% | **strong positive bias** |
+| gold rows, weighted | 31% / 35% / 34% | 62% | 24% | positive bias gone, still over-reacts |
+| gold rows, no class weights | 9% / **88%** / 3% | 11% | 83% | under-reacts: misses positive and negative news |
+| gold rows, no class weights, Optuna | 24% / 63% / 12% | 35% | 59% | closest mix, still too negative |
+
+Class weights act as a dial between over-reacting and under-reacting rather than a fix. Every model but the unweighted
+one predicts negative far more often than the 9% in the data, which pulls the dashboard's net sentiment down.
+
+**Ticker, publisher and length**
+
+- **Publisher and length gaps are fixed.** The Marketaux-trained model was flagged on publisher (0.25 accuracy gap)
+  and length (0.19). The gold-trained models are at 0.03–0.12 on both, except the tuned unweighted one, where length
+  is flagged again (0.20).
+- **The ticker gap comes from pretrained FinBERT, not from fine-tuning.** Accuracy per ticker:
+
+  | Ticker | Rows | Neutral share | Champion | Gold, weighted | Gold, no weights, Optuna |
+  |---|---|---|---|---|---|
+  | TSLA | 21 | 62% | 0.24 | 0.29 | 0.43 |
+  | AAPL | 35 | 77% | 0.43 | 0.43 | 0.49 |
+  | MSFT | 47 | 79% | 0.49 | 0.43 | 0.53 |
+  | GOOGL | 40 | 90% | 0.50 | 0.42 | 0.70 |
+  | AMZN | 39 | 74% | 0.54 | 0.51 | 0.59 |
+  | META | 40 | 72% | 0.55 | 0.55 | 0.65 |
+  | NVDA | 40 | 70% | 0.55 | 0.48 | 0.60 |
+  | **gap** | | | **0.31** | 0.26 | 0.27 |
+
+  TSLA is worst for every model. Its headlines are the least often neutral (62%), and with 21 rows, just above the
+  20-row minimum, the slice is noisy. Fine-tuning narrows the gap slightly rather than causing it.
+
+**What would help:** more positive and negative training examples (39 and 42 today), which the LLM-labeling step
+below would supply, and more TSLA eval rows to tell whether its gap is real.
+
 ## Which metric decides
 
 We keep **macro F1** as the promotion metric, chosen from how the model is used rather than from which run it favors:
