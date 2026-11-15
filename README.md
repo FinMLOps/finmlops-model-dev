@@ -129,6 +129,7 @@ uv run python -m scripts.train baseline      # score + register pretrained FinBE
 uv run python -m scripts.train               # one LoRA run with the default settings
 uv run python -m scripts.train tune          # only the Optuna search (add a number for more trials: tune 20)
 uv run python -m scripts.analysis            # SHAP, title vs summary, hyperparameter importance
+uv run python -m scripts.registry push       # copy the champion to MODEL_BUCKET on Google Cloud Storage
 uv run python -m scripts.data sample-gold    # rows for hand-labeling (see below)
 uv run python -m scripts.benchmark           # agreement: annotators, Marketaux and the LLM vs the gold labels
 uv run python -m scripts.llm_labels gold     # LLM labels (see "LLM labels for Finnhub")
