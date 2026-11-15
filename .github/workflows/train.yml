@@ -1,0 +1,108 @@
+name: train
+
+# CI/CD for the model: retrains whenever code or data that affects the model lands on main, or by hand from the
+# Actions tab (optionally with the Optuna search). Tests run first; the pipeline then trains a challenger, validates
+# it (macro F1 >= 0.60), runs the slice (bias) report, compares it with the champion, and promotes it (after copying
+# it to GCS) only if it is confidently better; otherwise the champion stays (rollback). Failures are emailed.
+on:
+  push:
+    branches: [main]
+    paths: ["data/news.parquet.dvc", "data/gold.csv", "scripts/**", "pyproject.toml", "uv.lock"]
+  workflow_dispatch:
+    inputs:
+      tune:
+        description: "Run the Optuna search before training"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: train
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/pytest.yml
+    secrets: inherit
+
+  train:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # CPU only
+    env:
+      # Repo settings -> Secrets and variables -> Actions:
+      #   GCP_SA_KEY          (secret) service-account JSON: read access to the DVC bucket, write access to MODEL_BUCKET
+      #   MLFLOW_TRACKING_URI (secret, optional) shared MLflow server; without it the registry only lives in this run
+      #   MODEL_BUCKET        (variable, optional) bucket the new champion is copied to
+      HAS_GCP: ${{ secrets.GCP_SA_KEY != '' }}
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
+      GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      ALERT_RECIPIENTS: ${{ secrets.RECIPIENTS }}
+
+    steps:
+      - name: Skip until Google Cloud access is set up
+        if: env.HAS_GCP != 'true'
+        run: echo "::notice::GCP_SA_KEY is not set, so the data can't be pulled and training is skipped."
+
+      - name: Checkout repository
+        if: env.HAS_GCP == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        if: env.HAS_GCP == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (CPU PyTorch)
+        if: env.HAS_GCP == 'true'
+        run: uv python install && uv sync --frozen --no-dev --extra cpu
+
+      - name: Authenticate to Google Cloud
+        if: env.HAS_GCP == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get the data snapshot pinned in data/news.parquet.dvc
+        if: env.HAS_GCP == 'true'
+        run: uv run dvc pull data/news.parquet.dvc
+
+      - name: Run the model pipeline (train, validate, slice report, compare, promote or roll back)
+        if: env.HAS_GCP == 'true'
+        run: uv run python -m scripts.pipeline ${{ inputs.tune && '--tune' || '' }}
+
+      - name: Keep the charts, reports and run record
+        if: always() && env.HAS_GCP == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-pipeline-${{ github.run_id }}
+          path: |
+            outputs/
+            mlflow.db
+            mlruns/
+          if-no-files-found: ignore
+
+      - name: Email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "Model training failed: ${{ github.repository }} (${{ github.ref_name }})"
+          to: ${{ secrets.RECIPIENTS }}
+          from: "GitHub Actions <${{ secrets.GMAIL_USERNAME }}>"
+          body: |
+            The model pipeline failed (a crash, or the challenger failed validation).
+
+            - Commit: ${{ github.sha }}
+            - Triggered by: ${{ github.actor }}
+
+            Logs, charts and reports:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

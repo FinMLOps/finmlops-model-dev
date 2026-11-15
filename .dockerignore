@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.env
+data
+outputs
+mlruns
+*.db
+frontend
+tests
+FinSenti
+app-frontend
+*.pdf
+__pycache__
