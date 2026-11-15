@@ -116,7 +116,7 @@ def ask(prompt, model=None, retries=4):
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(request, timeout=300) as response:
                 candidate = json.load(response)["candidates"][0]
                 if candidate.get("groundingMetadata"):  # proof check: the answer must not come from a web search
                     raise RuntimeError("Gemini used web search for this answer; labels must come from the text alone")
@@ -132,6 +132,10 @@ def ask(prompt, model=None, retries=4):
             wait = 20 * (attempt + 1)
             log.warning("Gemini answered %s; waiting %ds before retrying", exc.code, wait)
             time.sleep(wait)
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:  # slow or dropped connection: try again
+            if attempt == retries:
+                raise RuntimeError(f"Gemini didn't answer after {retries + 1} tries ({exc}); try another LLM_MODEL") from exc
+            log.warning("no answer from Gemini (%s); retrying", exc)
 
 
 def label_batch(rows, ask=ask):

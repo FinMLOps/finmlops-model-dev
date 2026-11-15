@@ -116,6 +116,6 @@ if __name__ == "__main__":
     if not GOLD_PATH.exists():
         raise SystemExit(f"no {GOLD_PATH.name} yet; run `uv run python -m scripts.data sample-gold` and label it")
     gold = load_gold()
-    show("Annotators vs each other (shared rows)", annotator_agreement(gold))
-    show("Marketaux score vs hand labels", agreement(gold))
-    show("LLM vs hand labels", llm_labels.agreement(gold))
+    show("label vs label_2 on the shared rows (needs a person to fill label_2)", annotator_agreement(gold))
+    show("Marketaux score vs gold labels", agreement(gold))
+    show("LLM training labels vs gold labels", llm_labels.agreement(gold))

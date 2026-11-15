@@ -104,3 +104,17 @@ def test_the_examples_are_not_real_rows():
 def test_parse_accepts_both_shapes_and_drops_junk():
     assert llm_labels.parse('{"labels": [{"i": 0, "label": "Negative", "mixed": true}]}', 1) == [(0, "negative", True)]
     assert llm_labels.parse('[{"i": 0, "label": "neutral"}, {"i": 5, "label": "neutral"}, {"i": 0}]', 1) == [(0, "neutral", False)]
+
+
+def test_a_timeout_is_retried(monkeypatch):
+    calls = []
+
+    def flaky(request, timeout):
+        calls.append(1)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return FakeResponse({"candidates": [{"content": {"parts": [{"text": "[]"}]}}]})
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test")
+    monkeypatch.setattr(llm_labels.urllib.request, "urlopen", flaky)
+    assert llm_labels.ask("hi") == "[]" and len(calls) == 2
