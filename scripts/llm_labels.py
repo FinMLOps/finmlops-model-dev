@@ -6,7 +6,7 @@ uv run python -m scripts.llm_labels train [--limit N]   # label the Finnhub rows
 Needs GEMINI_API_KEY in .env (free key from Google AI Studio). Results are saved after every request to
 data/llm_labels.parquet, so a run that stops (rate limit, Ctrl+C) picks up where it left off.
 
-The labels on the gold rows are never trained on; they only tell us how often the LLM agrees with our hand labels.
+The labels on the gold rows are never trained on; they only tell us how often the LLM agrees with the gold labels.
 train.py uses the training-period labels only if that agreement is at least as good as Marketaux's (see gate()).
 """
 
@@ -179,7 +179,7 @@ def run(split, limit=None, path=LLM_LABELS_PATH, ask=ask):
 
 
 def agreement(gold, labels=None):
-    """how often the LLM agrees with our hand labels on the gold rows: {rows, accuracy, kappa}, or {} if unknown"""
+    """how often the LLM agrees with the gold labels on the gold rows: {rows, accuracy, kappa}, or {} if unknown"""
     labels = load() if labels is None else labels
     llm = labels[labels["split"] == "gold"][["id", "ticker", "label"]].rename(columns={"label": "llm"})
     both = gold.merge(llm, on=["id", "ticker"])
@@ -215,4 +215,4 @@ if __name__ == "__main__":
         sys.exit("no data/gold.csv yet; hand-label the gold set first (python -m scripts.data sample-gold)")
     run(args[0], limit)
     if GOLD_PATH.exists():
-        print("LLM vs hand labels:", agreement(load_gold()))
+        print("LLM vs gold labels:", agreement(load_gold()))

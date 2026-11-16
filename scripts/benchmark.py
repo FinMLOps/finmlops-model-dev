@@ -5,7 +5,7 @@ exactly the same articles, even after `dvc update` brings in newer data or late-
 frozen: labels are made from the stored Marketaux score each time the file is read, so they always follow
 LABEL_THRESHOLD, and predictions are always made fresh by the model being scored.
 
-uv run python -m scripts.benchmark   # build the file if needed; with data/gold.csv, also Marketaux vs hand labels
+uv run python -m scripts.benchmark   # build the file if needed; with data/gold.csv, also Marketaux vs the gold labels
 """
 
 import logging
@@ -71,7 +71,7 @@ def report(df):
 
 
 def agreement(gold):
-    """how often Marketaux's score, turned into a label, matches our hand label (accuracy and Cohen's kappa)"""
+    """how often Marketaux's score, turned into a label, matches the gold label (accuracy and Cohen's kappa)"""
     rows = gold[(gold["source"] == "marketaux") & gold["sentiment_score"].notna()]
     if rows.empty:
         return {}
@@ -95,7 +95,7 @@ def annotator_agreement(gold):
 
 
 def marketaux_kappa(gold):
-    """Marketaux's agreement with the hand labels at the current cut-off, or None if there are no Marketaux gold rows"""
+    """Marketaux's agreement with the gold labels at the current cut-off, or None if there are no Marketaux gold rows"""
     return agreement(gold).get(f"kappa_{thr(LABEL_THRESHOLD)}")
 
 

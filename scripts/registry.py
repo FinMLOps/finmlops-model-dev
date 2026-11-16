@@ -1,6 +1,10 @@
-"""MLflow model registry (champion / challenger) and pushing a model to Google Cloud Storage."""
+"""MLflow model registry (champion / challenger) and pushing a model to Google Cloud Storage.
+
+uv run python -m scripts.registry push [VERSION]   # copy a version (default: the champion) to MODEL_BUCKET
+"""
 
 import os
+import sys
 from pathlib import Path
 
 import mlflow
@@ -86,3 +90,17 @@ def push_to_gcs(version, bucket=None):
     for f in files:
         gcs.blob(f"{prefix}/{f.relative_to(local).as_posix()}").upload_from_filename(str(f))
     return f"gs://{name}/{prefix}"
+
+
+def main(args):
+    if not args or args[0] != "push" or len(args) > 2 or (len(args) == 2 and not args[1].isdigit()):
+        sys.exit("usage: python -m scripts.registry push [VERSION]")
+    setup()
+    version = args[1] if len(args) == 2 else champion_version()
+    if version is None:
+        sys.exit("no champion registered yet; run `uv run python -m scripts.train baseline` first")
+    print(f"v{version} -> {push_to_gcs(version)}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

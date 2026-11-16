@@ -46,10 +46,10 @@ The model always reads the ticker and company in front of the text, like `NVDA (
 |---|---|---|
 | Training | Marketaux, before the test window | Marketaux score (plus LLM labels for Finnhub, if they pass the gold check, see below) |
 | Validation (best epoch, Optuna) | Marketaux, the newest part before the test window | Marketaux score |
-| **Test that decides promotion** | **Hand-labeled gold set from the test window, mostly Finnhub** | Our hand labels |
+| **Test that decides promotion** | **Gold set from the test window, mostly Finnhub** | LLM labels (Gemini), see [Gold set](#gold-set) |
 | Secondary test | Marketaux, 6 to 12 Nov (the benchmark) | Marketaux score |
 
-**Benchmark** ([`scripts/benchmark.py`](scripts/benchmark.py)) freezes the test set: Marketaux news from 6 Nov up to 12 Nov 2026. The rows are saved once as `data/benchmark_20261106_20261112.parquet` and never rebuilt, so every model is compared on exactly the same articles, even after we pull newer data. Only the rows are frozen: the labels are made again from the stored Marketaux score every time, so they always follow the current cut-off. Pretrained FinBERT scores it first, and that score is the baseline to beat. It also shows how much the results move if the ±0.15 cut-off were 0.10 or 0.25, and how often Marketaux agrees with our own hand labels.
+**Benchmark** ([`scripts/benchmark.py`](scripts/benchmark.py)) freezes the test set: Marketaux news from 6 Nov up to 12 Nov 2026. The rows are saved once as `data/benchmark_20261106_20261112.parquet` and never rebuilt, so every model is compared on exactly the same articles, even after we pull newer data. Only the rows are frozen: the labels are made again from the stored Marketaux score every time, so they always follow the current cut-off. Pretrained FinBERT scores it first, and that score is the baseline to beat. It also shows how much the results move if the ±0.15 cut-off were 0.10 or 0.25, and how often Marketaux agrees with the gold labels.
 
 **Training** ([`scripts/train.py`](scripts/train.py)) fine-tunes FinBERT with [LoRA](https://huggingface.co/docs/peft), which only trains small adapter layers instead of the whole model, so it's fast and fits in the memory of an ordinary GPU. Most of our labels are positive, so the loss gives the rarer negative and neutral rows more weight, otherwise the model would learn to just say "positive". Training also uses a learning-rate warmup, gradient clipping and weight decay, and keeps the epoch that scored best on the validation set. An [Optuna](https://optuna.org) search tries different learning rates, LoRA sizes, dropout and epochs, scored on the validation set only (never the test set).
 
@@ -129,8 +129,9 @@ uv run python -m scripts.train baseline      # score + register pretrained FinBE
 uv run python -m scripts.train               # one LoRA run with the default settings
 uv run python -m scripts.train tune          # only the Optuna search (add a number for more trials: tune 20)
 uv run python -m scripts.analysis            # SHAP, title vs summary, hyperparameter importance
+uv run python -m scripts.registry push       # copy the champion to MODEL_BUCKET on Google Cloud Storage
 uv run python -m scripts.data sample-gold    # rows for hand-labeling (see below)
-uv run python -m scripts.benchmark           # agreement: annotators, Marketaux and the LLM vs our hand labels
+uv run python -m scripts.benchmark           # agreement: annotators, Marketaux and the LLM vs the gold labels
 uv run python -m scripts.llm_labels gold     # LLM labels (see "LLM labels for Finnhub")
 ```
 
@@ -150,9 +151,12 @@ git commit -m "update to the latest data snapshot" data/news.parquet.dvc
 > [!NOTE]
 > A new snapshot doesn't change the frozen benchmark. Rows after 12 Nov are left out of both training and testing until we move the test dates in [`scripts/config.py`](scripts/config.py) on purpose.
 
-## Hand-labeled gold set
+## Gold set
 
 Marketaux's scores come from Marketaux's own model, so testing on them only shows how well we copy it. The gold set is our ground truth:
+
+> [!IMPORTANT]
+> The current `data/gold.csv` (801 rows) was labeled by an LLM, not by hand: Gemini 3.5 Flash (550 rows), Gemini 3.5 Flash-Lite (232) and Qwen 2.5 7B through Ollama (19), as recorded in its `labeled_by` column. The steps below are how to hand-label it; `label_2` hasn't been filled in yet, so the LLM labels haven't been checked against a person.
 
 ```bash
 uv run python -m scripts.data sample-gold
@@ -177,7 +181,7 @@ shows three agreement numbers (Cohen's kappa, where 1 is perfect and 0 is chance
 The 18,000 Finnhub headlines from the training period have no labels. [`scripts/llm_labels.py`](scripts/llm_labels.py) can label them with Gemini (a free key from [Google AI Studio](https://aistudio.google.com/apikey) in `.env` as `GEMINI_API_KEY`), 25 headlines per request, saving after every request so a stopped run picks up where it left off:
 
 ```bash
-uv run python -m scripts.llm_labels gold --limit 100    # first: how good is the LLM on our hand labels?
+uv run python -m scripts.llm_labels gold --limit 100    # first: how good is the LLM on the gold labels?
 uv run python -m scripts.llm_labels train               # then the training-period Finnhub rows
 ```
 
