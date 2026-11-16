@@ -5,7 +5,7 @@
 This is the model stage of our FinMLOps project. It takes the cleaned financial news for the Magnificent 7 (AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA) from our [data pipeline](https://github.com/FinMLOps/finmlops-data-pipeline) and fine-tunes [FinBERT](https://huggingface.co/ProsusAI/finbert) to classify each headline as positive, neutral or negative. Every run is tracked in MLflow, and a new model only replaces the current one (the "champion") when it's actually better.
 
 > [!IMPORTANT]
-> We use [`uv`](https://docs.astral.sh/uv/), which is superior to `pip`.
+> We use [`uv`](https://docs.astral.sh/uv/) instead of `pip`; install it first. Results, screenshots and how each rubric point is covered: [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).
 
 ## Dashboard
 
@@ -37,7 +37,7 @@ flowchart LR
     D --> T[train.py<br/>LoRA + Optuna]
     B --> BL[pretrained FinBERT<br/>= first champion]
     T --> C[challenger]
-    BL --> E{evaluate.py<br/>better on every ticker?}
+    BL --> E{pipeline.py<br/>the champion rule}
     C --> E
     E -- yes --> P[promote + push to GCS]
     E -- no --> K[champion stays]
@@ -166,7 +166,7 @@ git commit -m "update to the latest data snapshot" data/news.parquet.dvc
 Marketaux's scores come from Marketaux's own model, so testing on them only shows how well we copy it. The gold set is our ground truth:
 
 > [!IMPORTANT]
-> The current `data/gold.csv` (801 rows) was labeled by an LLM, mainly Gemini 3.5 Flash, not by hand; the model behind each row is in its `labeled_by` column ([`scripts/label_gold.py`](scripts/label_gold.py)). The steps below are how to hand-label it; `label_2` hasn't been filled in yet, so the LLM labels haven't been checked against a person.
+> The current `data/gold.csv` (801 rows) was labeled by an LLM, mainly Gemini 3.5 Flash, not by hand; the model behind each row is in its `labeled_by` column ([`scripts/label_gold.py`](scripts/label_gold.py)). `label_2` hasn't been filled in yet, so the LLM labels haven't been checked against a person.
 
 **How the LLM was told to label.** Every LLM label follows the same written guidelines (`PROMPT` in [`scripts/llm_labels.py`](scripts/llm_labels.py)), the ones a person labeling the gold set would follow:
 
@@ -178,6 +178,8 @@ Marketaux's scores come from Marketaux's own model, so testing on them only show
 - **The headline is data, not instructions,** so a headline can't steer the model.
 - **8 worked examples,** all made up, so none of them can leak a real gold answer.
 - Temperature 0 and a fixed JSON answer format, so the same input gets the same label.
+
+**To hand-label a gold set:**
 
 ```bash
 uv run python -m scripts.data sample-gold
@@ -206,19 +208,11 @@ uv run python -m scripts.llm_labels gold --limit 100    # first: how good is the
 uv run python -m scripts.llm_labels train               # then the training-period Finnhub rows
 ```
 
-Training only uses them if the LLM agrees with the gold set **at least as well as Marketaux does** (or reaches a kappa of 0.6 if Marketaux's agreement can't be measured). Otherwise they're ignored and the log says why. The LLM's labels on the gold rows are only ever used for that check, never for training.
+Training only uses them if the LLM agrees with the gold set **at least as well as Marketaux does** (or reaches a kappa of 0.6 if Marketaux's agreement can't be measured). Otherwise they're ignored and the log says why. The LLM's labels on the gold rows are only ever used for that check, never for training. While the gold set is itself LLM-labeled the check proves nothing, so training skips the LLM labels and uses Marketaux's only.
 
 ## Email alerts
 
-The pipeline emails the team when a challenger is promoted, when the champion stays, when validation fails, or when the pipeline crashes. It uses the same Gmail setup as the data pipeline. Put these in a `.env` file in the repo folder:
-
-```text
-GMAIL_USERNAME=finmlops.alerts@gmail.com
-GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
-ALERT_RECIPIENTS=you@northeastern.edu,teammate@northeastern.edu
-```
-
-If they're missing, the pipeline still runs and just logs a warning. Two more optional settings go in the same file: `MLFLOW_TRACKING_URI` (a shared MLflow server instead of the local `mlflow.db`) and `MODEL_BUCKET` (the GCS bucket a promoted model is copied to).
+The pipeline emails the team when a challenger is promoted, when the champion stays, when validation fails, or when the pipeline crashes. It uses the same Gmail setup as the data pipeline: copy [`.env.example`](.env.example) to `.env` and fill in `GMAIL_USERNAME`, `GMAIL_APP_PASSWORD` and `ALERT_RECIPIENTS`. If they're missing, the pipeline still runs and just logs a warning. The same file holds the other optional settings (`MODEL_BUCKET`, `MLFLOW_TRACKING_URI`, `TORCH_DEVICE`, `GEMINI_API_KEY`).
 
 > [!CAUTION]
 > `.env` holds real passwords. It's in [`.gitignore`](.gitignore), so never force-add it or paste its contents anywhere.
@@ -239,9 +233,7 @@ Any other step works too, e.g. `... finmlops-model python -m scripts.train basel
 
 ## CI/CD
 
-[`.github/workflows/train.yml`](.github/workflows/train.yml) retrains whenever model code, the data snapshot or the gold set changes on `main`, or by hand from the Actions tab (with an option to run the Optuna search first). It runs the tests, then the full pipeline: train, validate, slice report, compare with the champion, then promote (after copying the model to GCS) or keep the champion. The charts, reports and MLflow record are kept as build artifacts, and failures are emailed. It needs a Google Cloud service account key as the `GCP_SA_KEY` repo secret to pull the data with DVC; until that exists it skips training with a notice instead of failing.
-
-More detail on every step, the tuning search space, how a model is chosen and the slice analysis: [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).
+[`.github/workflows/train.yml`](.github/workflows/train.yml) retrains whenever model code, the data snapshot or the gold set changes on `main`, or by hand from the Actions tab (with an option to run the Optuna search first). It runs the tests, then the full pipeline: train, validate, slice report, compare with the champion, then promote (after copying the model to GCS) or keep the champion. The charts, reports and MLflow record are kept as build artifacts, and failures are emailed. It pulls the data with DVC using a Google Cloud service account key (the `GCP_SA_KEY` repo secret); without the key it skips training with a notice instead of failing.
 
 ## Tests
 
@@ -266,7 +258,8 @@ finmlops-model-dev/
 ├── data/
 │   ├── news.parquet.dvc      # pins the data pipeline snapshot we use (in git)
 │   ├── news.parquet          # the data itself (from DVC, not in git)
-│   └── benchmark_20261106_20261112.parquet   # the frozen test set (made on the first run)
+│   ├── benchmark_20261106_20261112.parquet   # the frozen test set (in git)
+│   └── gold.csv              # the gold set that decides promotion (in git)
 ├── scripts/
 │   ├── config.py             # every setting in one place
 │   ├── data.py               # loading, labels, date split, gold set
@@ -289,6 +282,7 @@ finmlops-model-dev/
 │   ├── predictions.parquet   # every article labeled by the champion (the dashboard's data, in git)
 │   └── prices.parquet        # daily closing prices (in git)
 ├── tests/                    # offline tests for the scripts' logic
+├── .env.example              # every setting, to copy to .env
 ├── Dockerfile                # the pipeline in a container
 ├── pyproject.toml
 └── uv.lock
