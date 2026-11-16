@@ -96,7 +96,7 @@ def test_load_gold_forgives_typing(tmp_path, monkeypatch, make_news):
 @pytest.mark.parametrize("rows, error", [
     ("1,AAPL,t,s,,\n", "without a label"),
     ("1,AAPL,t,s,great,\n", "unknown labels"),
-    ("9,AAPL,t,s,positive,\n", "not in news.parquet"),
+    ("9,AAPL,gone,s,positive,\n", "not in news.parquet"),
     ("1,AAPL,t,s,positive,\n1,AAPL,t,s,negative,\n", "duplicate"),
 ])
 def test_load_gold_rejects_bad_files(tmp_path, monkeypatch, make_news, rows, error):
@@ -158,4 +158,18 @@ def test_load_gold_reads_the_second_annotator(tmp_path, monkeypatch, make_news):
     assert data.load_gold(path)["label_2"].tolist() == ["neutral", ""]
     path.write_text("id,ticker,shared,label,label_2,mixed_signal\n1,AAPL,1,positive,great,\n")
     with pytest.raises(ValueError, match="label_2"):
+        data.load_gold(path)
+
+
+def test_load_gold_finds_a_story_that_moved_to_another_id(tmp_path, monkeypatch, make_news):
+    """the data pipeline may keep the other API's copy of a headline in a new snapshot, under a different id"""
+    news = make_news([{"id": "new", "source": "finnhub", "title": "Apple Rises!"},
+                      {"id": "x", "title": "twin"}, {"id": "y", "title": "twin"}])
+    monkeypatch.setattr(data, "load_news", lambda: news)
+    path = tmp_path / "gold.csv"
+    path.write_text(GOLD_HEADER + "old,AAPL,apple rises,s,positive,\n")
+    gold = data.load_gold(path)
+    assert gold["id"].tolist() == ["new"] and gold["label"].tolist() == ["positive"]
+    path.write_text(GOLD_HEADER + "old,AAPL,twin,s,positive,\n")  # two rows with that headline: no guessing
+    with pytest.raises(ValueError, match="not in news.parquet"):
         data.load_gold(path)

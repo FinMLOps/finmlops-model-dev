@@ -208,10 +208,40 @@ def load_gold(path=GOLD_PATH):
     gold["mixed_signal"] = gold["mixed_signal"].str.lower().isin(YES)
     raw = pd.read_csv(path, dtype=str, keep_default_na=False)
     gold["labeled_by"] = raw["labeled_by"].str.strip().replace("", "human").values if "labeled_by" in raw else "human"
-    df = gold.merge(load_news(), on=["id", "ticker"])
+    news = load_news()
+    if "title" in raw:
+        gold["id"] = rematch_ids(gold, raw["title"], news)
+    df = gold.merge(news, on=["id", "ticker"])
     if len(df) < len(gold):
         raise ValueError(f"{len(gold) - len(df)} gold rows are not in news.parquet (run `dvc update`?)")
     return df
+
+
+def rematch_ids(gold, titles, news):
+    """gold ids, with the ones news.parquet no longer has replaced by the row with the same ticker and headline.
+
+    When both APIs send the same headline at the same time, the data pipeline keeps one copy, and which copy survives
+    can change between snapshots, so a gold story can come back under the other source's id. A gold row is only moved
+    to a row with exactly one match that isn't already a gold row; anything else stays missing for load_gold to report.
+    """
+    have = set(zip(news["id"], news["ticker"]))
+    lost = [(i, key) for i, key in enumerate(zip(gold["id"], gold["ticker"])) if key not in have]
+    if not lost:
+        return gold["id"]
+    keyed = news.assign(key=title_key(news["title"]))
+    candidates = keyed.groupby(["key", "ticker"])["id"].agg(list)
+    taken = set(zip(gold["id"], gold["ticker"]))
+    lost_keys = title_key(titles.iloc[[i for i, _ in lost]]).tolist()
+    ids, moved = gold["id"].copy(), []
+    for (i, (old, ticker)), key in zip(lost, lost_keys):
+        match = candidates.get((key, ticker), [])
+        if key and len(match) == 1 and (match[0], ticker) not in taken:
+            ids.iloc[i] = match[0]
+            moved.append(f"{old}->{match[0]} ({ticker})")
+    if moved:
+        log.warning("%d gold rows are under a new id in this snapshot, matched by headline: %s", len(moved),
+                    ", ".join(moved))
+    return ids
 
 
 if __name__ == "__main__":
