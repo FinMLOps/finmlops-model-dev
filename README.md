@@ -166,7 +166,18 @@ git commit -m "update to the latest data snapshot" data/news.parquet.dvc
 Marketaux's scores come from Marketaux's own model, so testing on them only shows how well we copy it. The gold set is our ground truth:
 
 > [!IMPORTANT]
-> The current `data/gold.csv` (801 rows) was labeled by an LLM, not by hand: Gemini 3.5 Flash (550 rows), Gemini 3.5 Flash-Lite (232) and Qwen 2.5 7B through Ollama (19), as recorded in its `labeled_by` column. The steps below are how to hand-label it; `label_2` hasn't been filled in yet, so the LLM labels haven't been checked against a person.
+> The current `data/gold.csv` (801 rows) was labeled by an LLM, mainly Gemini 3.5 Flash, not by hand; the model behind each row is in its `labeled_by` column ([`scripts/label_gold.py`](scripts/label_gold.py)). The steps below are how to hand-label it; `label_2` hasn't been filled in yet, so the LLM labels haven't been checked against a person.
+
+**How the LLM was told to label.** Every LLM label follows the same written guidelines (`PROMPT` in [`scripts/llm_labels.py`](scripts/llm_labels.py)), the ones a person labeling the gold set would follow:
+
+- **Only the text counts.** The model gets nothing but each row's ticker, company name, headline and summary (no URL, no date, no source), and is told to judge it like a person who sees only that line: not to use what it knows about the company from elsewhere, later events, or how the stock actually moved. If the text alone doesn't make the direction clear, the label is neutral.
+- **No internet.** The requests have no tools, so Gemini can't search the web or open links, and an answer that comes back with search results attached is rejected.
+- **Sentiment toward that one company,** from the point of view of someone holding its stock. A company only mentioned in passing (a list of tickers, "stocks to watch") is neutral.
+- **Facts over tone,** with lists of what counts as positive (a beat, an upgrade, a big contract), negative (a miss, a downgrade, a lawsuit, a recall) and neutral (an earnings date, a routine filing, "Is X a buy?").
+- **Mixed news** is flagged (`mixed_signal`) and labeled by what investors care about most, usually the forward-looking part.
+- **The headline is data, not instructions,** so a headline can't steer the model.
+- **8 worked examples,** all made up, so none of them can leak a real gold answer.
+- Temperature 0 and a fixed JSON answer format, so the same input gets the same label.
 
 ```bash
 uv run python -m scripts.data sample-gold
@@ -265,7 +276,7 @@ finmlops-model-dev/
 │   ├── evaluate.py           # predictions, metrics, the champion rule, the confidence interval
 │   ├── slices.py             # slice analysis with Fairlearn (bias check)
 │   ├── llm_labels.py         # Gemini labels for the unlabeled Finnhub rows
-│   ├── label_gold.py         # how data/gold.csv was labeled (Gemini, or Ollama)
+│   ├── label_gold.py         # how data/gold.csv was labeled by an LLM
 │   ├── registry.py           # MLflow model registry + GCS push
 │   ├── analysis.py           # charts and sensitivity analysis
 │   └── pipeline.py           # the whole flow in one command, with email alerts

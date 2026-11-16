@@ -5,9 +5,8 @@
     uv run python -m scripts.label_gold --ollama                      # a local model instead (qwen2.5:7b by default;
     uv run python -m scripts.label_gold --ollama --model llama3.2:3b  #   start it with `ollama serve`)
 
-We had no time to hand-label the gold set before the deadline, so this is how data/gold.csv was made: Gemini 3.5
-Flash and Flash-Lite labeled 782 rows and Qwen 2.5 7B through Ollama labeled 19, all with the same guidelines
-(llm_labels.PROMPT). It fills `label` and `mixed_signal` in data/gold_todo.csv and saves the result to data/gold.csv
+We had no time to hand-label the gold set before the deadline, so this is how data/gold.csv was made, mainly by
+Gemini 3.5 Flash, with the same guidelines as every LLM label (llm_labels.PROMPT). It fills `label` and `mixed_signal` in data/gold_todo.csv and saves the result to data/gold.csv
 after every batch, so a stopped run (Ctrl+C) continues where it left off. Rows that already have a label are never
 touched.
 

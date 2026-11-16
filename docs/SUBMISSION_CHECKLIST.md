@@ -39,7 +39,7 @@ The 11 Nov snapshot we trained on has 22,163 rows (one per article per ticker) f
 The model reads the ticker because 38% of Marketaux articles mention more than one ticker, and 138 of them have a different label per ticker. Without the ticker, the model would get the same text with two different answers.
 
 > [!IMPORTANT]
-> **The gold set was labeled by LLMs, not by hand.** We ran out of time to hand-label 801 rows, so Gemini 3.5 Flash (550 rows), Gemini 3.5 Flash-Lite (232, after the free quota ran out) and Qwen 2.5 7B through Ollama (19) labeled them, following written guidelines ([`PROMPT` in `scripts/llm_labels.py`](../scripts/llm_labels.py)). The model saw only each row's ticker, headline and summary, with web search off. Each row records which model labeled it (`labeled_by` in [`data/gold.csv`](../data/gold.csv)). The 120 rows marked `shared` are for checking the LLM against a person (`label_2`), which we haven't done yet.
+> **The gold set was labeled by LLMs, not by hand.** We ran out of time to hand-label 801 rows, so an LLM, mainly Gemini 3.5 Flash, labeled them, following written guidelines ([`PROMPT` in `scripts/llm_labels.py`](../scripts/llm_labels.py)). The model saw only each row's ticker, headline and summary, with web search off. Each row records which model labeled it (`labeled_by` in [`data/gold.csv`](../data/gold.csv)). The 120 rows marked `shared` are for checking the LLM against a person (`label_2`), which we haven't done yet.
 
 ### 2.2 Training and selecting the best model
 
@@ -246,7 +246,7 @@ What we take from it:
 | [`tests/test_benchmark.py`](../tests/test_benchmark.py) | 7 | freezing the benchmark once, labels follow the cut-off, agreement numbers |
 | [`tests/test_evaluate.py`](../tests/test_evaluate.py) | 5 | metrics, the per-ticker rule, our macro F1 matches scikit-learn, the bootstrap interval |
 | [`tests/test_hardware.py`](../tests/test_hardware.py) | 4 | device order, forcing a device, mixed precision only on NVIDIA |
-| [`tests/test_label_gold.py`](../tests/test_label_gold.py) | 4 | the gold-set labeler (Gemini or Ollama) never overwrites existing labels |
+| [`tests/test_label_gold.py`](../tests/test_label_gold.py) | 4 | the gold-set labeler never overwrites existing labels |
 | [`tests/test_analysis.py`](../tests/test_analysis.py) | 2 | the charts get written |
 | [`tests/test_slices.py`](../tests/test_slices.py) | 2 | the slice report |
 
