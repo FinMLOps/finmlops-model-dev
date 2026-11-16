@@ -1,16 +1,18 @@
-"""TEMPORARY: label the gold set with a local Ollama model, because there's no time to hand-label it before the deadline.
+"""Label the gold set with an LLM: Gemini by default, or a local model through Ollama.
 
-    ollama serve                                              # in another terminal, if Ollama isn't running yet
-    uv run python -m scripts.ollama_gold --limit 20           # try a few first, to see the speed
-    uv run python -m scripts.ollama_gold                      # then the rest (qwen2.5:7b by default)
-    uv run python -m scripts.ollama_gold --model llama3.2:3b  # faster, a bit less accurate
-    uv run python -m scripts.ollama_gold --gemini             # Gemini instead (GEMINI_API_KEY in .env): minutes, not an hour
+    uv run python -m scripts.label_gold --limit 20                    # try a few first
+    uv run python -m scripts.label_gold                               # then the rest (GEMINI_API_KEY in .env)
+    uv run python -m scripts.label_gold --ollama                      # a local model instead (qwen2.5:7b by default;
+    uv run python -m scripts.label_gold --ollama --model llama3.2:3b  #   start it with `ollama serve`)
 
-It fills `label` and `mixed_signal` in data/gold_todo.csv and saves the result to data/gold.csv after every batch, so
-a stopped run (Ctrl+C) continues where it left off. Rows that already have a label are never touched.
+We had no time to hand-label the gold set before the deadline, so this is how data/gold.csv was made: Gemini 3.5
+Flash and Flash-Lite labeled 782 rows and Qwen 2.5 7B through Ollama labeled 19, all with the same guidelines
+(llm_labels.PROMPT). It fills `label` and `mixed_signal` in data/gold_todo.csv and saves the result to data/gold.csv
+after every batch, so a stopped run (Ctrl+C) continues where it left off. Rows that already have a label are never
+touched.
 
 Be honest about what this makes: an LLM-labeled ("silver") test set, not hand labels. Every row it labels gets
-`labeled_by = ollama:<model>`, and it never fills `label_2`; a person labeling the `shared` rows into `label_2`
+`labeled_by = <gemini|ollama>:<model>`, and it never fills `label_2`; a person labeling the `shared` rows into `label_2`
 gives a real measure of how often the model agrees with a human (`python -m scripts.benchmark`).
 """
 
@@ -28,7 +30,7 @@ from scripts import llm_labels
 from scripts.config import GOLD_PATH, GOLD_TODO_PATH, setup_logging
 
 log = logging.getLogger(__name__)
-DEFAULT_MODEL = "qwen2.5:7b"
+DEFAULT_MODEL = "qwen2.5:7b"  # the Ollama model
 BATCH = 10  # small local models lose track of longer lists
 PROMPT = llm_labels.PROMPT  # the same guidelines as every other LLM label
 
@@ -91,10 +93,10 @@ if __name__ == "__main__":
     setup_logging()
     args = sys.argv[1:]
     limit = int(args[args.index("--limit") + 1]) if "--limit" in args else None
-    if "--gemini" in args:
+    if "--ollama" in args:
+        run(args[args.index("--model") + 1] if "--model" in args else DEFAULT_MODEL, limit)
+    else:
         from scripts.config import LLM_MODEL
 
         model = os.getenv("LLM_MODEL") or LLM_MODEL
         run(model, limit, ask=lambda prompt: llm_labels.ask(prompt, model), provider="gemini", batch=25)
-    else:
-        run(args[args.index("--model") + 1] if "--model" in args else DEFAULT_MODEL, limit)

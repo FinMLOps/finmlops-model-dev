@@ -5,8 +5,7 @@
 This is the model stage of our FinMLOps project. It takes the cleaned financial news for the Magnificent 7 (AAPL, MSFT, NVDA, GOOGL, META, AMZN, TSLA) from our [data pipeline](https://github.com/FinMLOps/finmlops-data-pipeline) and fine-tunes [FinBERT](https://huggingface.co/ProsusAI/finbert) to classify each headline as positive, neutral or negative. Every run is tracked in MLflow, and a new model only replaces the current one (the "champion") when it's actually better.
 
 > [!IMPORTANT]
-> - We use [`uv`](https://docs.astral.sh/uv/), which is superior to `pip`.
-> - Python is pinned to `3.12` (in [`.python-version`](.python-version)).
+> We use [`uv`](https://docs.astral.sh/uv/), which is superior to `pip`.
 
 ## Dashboard
 
@@ -266,6 +265,7 @@ finmlops-model-dev/
 │   ├── evaluate.py           # predictions, metrics, the champion rule, the confidence interval
 │   ├── slices.py             # slice analysis with Fairlearn (bias check)
 │   ├── llm_labels.py         # Gemini labels for the unlabeled Finnhub rows
+│   ├── label_gold.py         # how data/gold.csv was labeled (Gemini, or Ollama)
 │   ├── registry.py           # MLflow model registry + GCS push
 │   ├── analysis.py           # charts and sensitivity analysis
 │   └── pipeline.py           # the whole flow in one command, with email alerts

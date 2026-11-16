@@ -246,7 +246,7 @@ What we take from it:
 | [`tests/test_benchmark.py`](../tests/test_benchmark.py) | 7 | freezing the benchmark once, labels follow the cut-off, agreement numbers |
 | [`tests/test_evaluate.py`](../tests/test_evaluate.py) | 5 | metrics, the per-ticker rule, our macro F1 matches scikit-learn, the bootstrap interval |
 | [`tests/test_hardware.py`](../tests/test_hardware.py) | 4 | device order, forcing a device, mixed precision only on NVIDIA |
-| [`tests/test_ollama_gold.py`](../tests/test_ollama_gold.py) | 4 | the local LLM labeler never overwrites existing labels |
+| [`tests/test_label_gold.py`](../tests/test_label_gold.py) | 4 | the gold-set labeler (Gemini or Ollama) never overwrites existing labels |
 | [`tests/test_analysis.py`](../tests/test_analysis.py) | 2 | the charts get written |
 | [`tests/test_slices.py`](../tests/test_slices.py) | 2 | the slice report |
 
