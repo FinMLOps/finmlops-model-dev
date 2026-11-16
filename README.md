@@ -8,6 +8,17 @@ This is the model stage of our FinMLOps project. It takes the cleaned financial 
 > - We use [`uv`](https://docs.astral.sh/uv/), which is superior to `pip`.
 > - Python is pinned to `3.12` (in [`.python-version`](.python-version)).
 
+## Dashboard
+
+The dashboard shows the champion's labels for every article: net sentiment per ticker (% positive − % negative) next to the stock price, the latest headlines, a headline analyzer and the registered models. The data it reads is in the repo, so it runs right after cloning; see [`frontend/UI_SETUP.md`](frontend/UI_SETUP.md).
+
+```bash
+uv sync --extra cpu
+uv run python -m frontend.server             # http://localhost:8000
+```
+
+![The FinMLOps dashboard: NVDA's daily net sentiment against its closing price, the Magnificent 7 watchlist and the latest headlines](frontend/dashboard.png)
+
 ## Team
 
 | Name | GitHub | Email |
@@ -258,6 +269,14 @@ finmlops-model-dev/
 │   ├── registry.py           # MLflow model registry + GCS push
 │   ├── analysis.py           # charts and sensitivity analysis
 │   └── pipeline.py           # the whole flow in one command, with email alerts
+├── frontend/
+│   ├── server.py             # the dashboard (FastAPI); `score` labels every article, `prices` gets daily closes
+│   ├── static/               # the dashboard's HTML, CSS and JavaScript
+│   ├── UI_SETUP.md           # how to run it
+│   └── dashboard.png         # screenshot
+├── outputs/
+│   ├── predictions.parquet   # every article labeled by the champion (the dashboard's data, in git)
+│   └── prices.parquet        # daily closing prices (in git)
 ├── tests/                    # offline tests for the scripts' logic
 ├── Dockerfile                # the pipeline in a container
 ├── pyproject.toml

@@ -488,7 +488,7 @@ a.btn { display: inline-flex; align-items: center; gap: 6px; }
 }
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
 .splash-brand { display: flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
-.splash-brand .mark { width: 24px; height: 24px; }
+.splash-brand .mark { width: 30px; height: 30px; }
 .splash-brand span { color: var(--muted); font-weight: 500; padding-left: 9px; border-left: 1px solid var(--border-2); }
 .splash-bar { position: relative; width: 200px; height: 3px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
 .splash-bar i {
