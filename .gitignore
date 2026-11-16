@@ -6,7 +6,10 @@ __pycache__/
 !.env.example
 
 # made by running the pipeline (MLflow keeps the record of every run)
-outputs/
+outputs/*
+# except the dashboard's data, so the dashboard runs right after cloning (see frontend/UI_SETUP.md)
+!outputs/predictions.parquet
+!outputs/prices.parquet
 mlruns/
 mlflow.db
 optuna.db
