@@ -80,6 +80,14 @@ We compare two kinds of model: pretrained FinBERT as it is (the baseline), and F
 
 The current champion, pretrained FinBERT (v1), is in the bucket: a complete MLflow model folder of 11 files, 418 MB (`MLmodel`, the weights, the tokenizer, a model card and the pinned requirements).
 
+![MLflow registered models](assets/mlflow_registry.png)
+
+*The MLflow model registry: `finbert-sentiment` has 3 versions, and the `champion` alias is on version 1 (pretrained FinBERT), since neither fine-tuned version passed validation.*
+
+![The champion in the model bucket](assets/gcs_model_bucket.png)
+
+*The champion in `gs://finmlops-models/models/finbert-sentiment/v1/` on Google Cloud: the weights (`model.safetensors`, 438 MB) and config, with the tokenizer under `components/`.*
+
 > [!NOTE]
 > We used a Cloud Storage bucket rather than Artifact Registry because Artifact Registry stores container images and packages, while a model is a folder of files. The bucket is in the same Google Cloud project as our DVC bucket, and only the CI service account and the team can write to it.
 
@@ -97,6 +105,10 @@ The current champion, pretrained FinBERT (v1), is in the bucket: a complete MLfl
 
 Batch size (16), max length (256 tokens), weight decay, warmup and clipping stay fixed. The 10 trials scored 0.377 to 0.444 validation macro F1. Each data snapshot and label cut-off gets its own Optuna study (in `optuna.db`), so trials on old data never mix with new ones. Which hyperparameters mattered most is in [section 5](#5-model-sensitivity-analysis).
 
+![The tune run in MLflow](assets/mlflow_tune.png)
+
+*The `tune` run: the best parameters and their validation macro F1 (0.444), with the 10 trials as child runs (`trial-0` to `trial-9`).*
+
 ## 4. Experiment tracking and results
 
 Every run is tracked in MLflow ([`scripts/registry.py`](../scripts/registry.py) `setup()`; open it with `uv run mlflow ui --backend-store-uri sqlite:///mlflow.db`):
@@ -108,6 +120,14 @@ Every run is tracked in MLflow ([`scripts/registry.py`](../scripts/registry.py) 
 | `tune` | one nested `trial-N` run per trial, plus the best parameters and best validation F1 |
 | `select-vN` | the decision (tag), both models' metrics, the gain and its 95% interval, the charts below |
 | `sensitivity-vN` | the SHAP charts, F1 by input field, hyperparameter importance |
+
+![MLflow runs list](assets/mlflow_runs.png)
+
+*All runs of the 15 Nov session (17 with the 10 trials inside `tune`): `baseline`, `lora` (default settings), `tune`, `lora` (best settings), the two `select` runs and `sensitivity-v1`. The three training runs link to the model versions they registered (v1 to v3).*
+
+![A LoRA run in MLflow](assets/mlflow_lora_run.png)
+
+*The `lora` run with the best Optuna settings: 31 metrics (training loss, validation metrics per label and per ticker, the best epoch), the git commit it ran from, and the model version it registered (v3).*
 
 ### Results
 
@@ -173,6 +193,10 @@ Both challengers failed the first rule, so **the final model is pretrained FinBE
 
 *Learning rate and dropout explain almost all of the difference between trials; LoRA rank and alpha barely matter.*
 
+![The sensitivity run in MLflow](assets/mlflow_sensitivity.png)
+
+*The same numbers in the `sensitivity-v1` MLflow run: F1 on title + summary (0.40) vs title only (0.46), and the importance of each hyperparameter.*
+
 What we take from it:
 - **The summary hurts.** Pretrained FinBERT does better on the headline alone (0.460) than with the summary added (0.395), probably because summaries are longer and more mixed, and FinBERT was trained on single sentences.
 - **A future search** should spend its trials on learning rate and dropout, not on LoRA rank or alpha.
@@ -190,6 +214,10 @@ What we take from it:
 | Run record | the charts, reports, `mlflow.db` and `mlruns/` are uploaded as a build artifact of every run | `train.yml` |
 
 **First CI run** ([run 43764391235](https://github.com/FinMLOps/finmlops-model-dev/actions/runs/43764391235), 15 Nov): the tests passed, the data was pulled from the DVC bucket with the service account, and training ran on CPU in 21 minutes. The challenger scored 0.354 against the champion's 0.395 (gain −0.041, 95% interval −0.075 to −0.011), so the run failed validation, the workflow went red, and the failure email went out. That's the expected result while our training labels don't match the gold labels.
+
+![The training job on GitHub Actions](assets/ci_train_run.png)
+
+*The `train` job of that run: the pipeline's decision at the end of the log, exit code 1, then the run record uploaded and the failure email sent.*
 
 > [!NOTE]
 > Without a shared MLflow server (`MLFLOW_TRACKING_URI` secret), each CI run starts its own registry, scores pretrained FinBERT as its first champion and keeps the record only as a build artifact. Locally, the record is in `mlflow.db` on each laptop. The bucket is the one place every model that gets used ends up.
