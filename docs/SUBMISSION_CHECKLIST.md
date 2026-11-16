@@ -26,7 +26,7 @@ The data pipeline publishes `news.parquet` with DVC to our Google Cloud Storage 
 | What the model reads: `TICKER (Company): headline + summary` | `model_input()` |
 | Every MLflow run logs the snapshot it used | `data_info()` (`data_snapshot` param) |
 
-`news.parquet` has 22,163 rows (one per article per ticker) from 1 Oct to 11 Nov 2026: 20,755 from Finnhub and 1,408 from Marketaux. Only Marketaux scores each ticker's sentiment, so that's where our training labels come from:
+The 11 Nov snapshot we trained on has 22,163 rows (one per article per ticker) from 1 Oct to 11 Nov 2026: 20,755 from Finnhub and 1,408 from Marketaux. The repo has since moved to the 15 Nov snapshot (24,414 rows, up to 15 Nov). The test sets stay the same (the benchmark is frozen, and the gold set still has all 801 rows), while training and validation shift slightly to 867 and 97 rows, because the data pipeline kept the other copy of a few headlines that both APIs sent at the same time. Only Marketaux scores each ticker's sentiment, so that's where our training labels come from:
 
 | Set | Data | Labels | Rows |
 |---|---|---|---|
