@@ -696,9 +696,13 @@ function applyTheme() {
 async function loadNews() {
   state.newsLoaded = true;
   const { ticker, label } = state.news;
+  const q = $('#f-search').value.trim();
+  const token = (loadNews.token = {});
   $('#tbl-news').innerHTML = skRows(10);
   try {
-    state.newsRows = await api(`/api/headlines?ticker=${ticker}&label=${label}&limit=300`);
+    const rows = await api(`/api/headlines?ticker=${ticker}&label=${label}&q=${encodeURIComponent(q)}&limit=300`);
+    if (loadNews.token !== token) return; // a newer search already started
+    state.newsRows = rows;
     filterNews();
   } catch (e) {
     $('#tbl-news').innerHTML = messageRow(e.message);
@@ -706,10 +710,14 @@ async function loadNews() {
 }
 
 function filterNews() {
-  const q = $('#f-search').value.trim().toLowerCase();
-  const rows = q ? state.newsRows.filter(r => `${r.title} ${r.publisher}`.toLowerCase().includes(q)) : state.newsRows;
-  $('#news-count').textContent = `${rows.length} shown`;
-  renderTable($('#tbl-news'), rows);
+  $('#news-count').textContent = `${state.newsRows.length} shown`;
+  renderTable($('#tbl-news'), state.newsRows);
+}
+
+// the search box queries the server (all articles, not just the loaded 300), shortly after typing stops
+function searchNews() {
+  clearTimeout(searchNews.timer);
+  searchNews.timer = setTimeout(loadNews, 250);
 }
 
 // ---------- analyzer ----------
@@ -1050,16 +1058,43 @@ function showTourStep() {
   state.tour.swapTimer = setTimeout(() => {
     if (!state.tour) return;
     fillTourStep();
+    setTourSide();
     body.classList.remove('swap');
   }, reducedMotion ? 0 : 150);
   $('#tour-next').focus({ preventScroll: true });
 }
 
-// scroll only when the target isn't already comfortably on screen (the top bar never needs it)
+// the card's side for a target at rect r: to the right of tall targets, else below, else above;
+// 'inside' (covering part of the target) only when nothing else fits
+function tourSide(r) {
+  const gap = 14, m = 12, pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
+  if (r.right + gap + w < innerWidth - m && r.height > innerHeight * 0.45) return 'right';
+  if (r.bottom + gap + h <= innerHeight - m) return 'below';
+  if (r.top - gap - h >= TOPBAR + m) return 'above';
+  return 'inside';
+}
+const TOPBAR = 54;
+
+// scroll only when the target isn't comfortably on screen with room for the card (the top bar never needs it);
+// then scroll just far enough to leave room for the card above the target, so it never covers it
 function scrollToTarget() {
-  const el = tourTarget(), r = el.getBoundingClientRect();
-  if (el.closest('.topbar')) return;
-  if (r.top < 96 || r.bottom > innerHeight - 16) el.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
+  const el = tourTarget(), r = el.getBoundingClientRect(), t = state.tour;
+  t.finalY = scrollY;
+  const visible = r.top >= TOPBAR + 12 && r.bottom <= innerHeight - 16;
+  if (!el.closest('.topbar') && !(visible && tourSide(r) !== 'inside')) {
+    const room = TOPBAR + 12 + $('#tour-pop').offsetHeight + 14 + 24; // card height plus a line of slack
+    const max = document.documentElement.scrollHeight - innerHeight;
+    t.finalY = Math.min(max, Math.max(0, scrollY + r.top - room));
+    scrollTo({ top: t.finalY, behavior: reducedMotion ? 'instant' : 'smooth' });
+  }
+  setTourSide();
+}
+
+// pick the card's side once per step, from where the target will be once scrolling stops; deciding it
+// every frame made the card detour (to a corner) while the page was still scrolling
+function setTourSide() {
+  const t = state.tour, now = tourTarget().getBoundingClientRect(), shift = scrollY - t.finalY;
+  t.side = tourSide({ top: now.top + shift, bottom: now.bottom + shift, right: now.right, height: now.height });
 }
 
 // where the spotlight and card should be right now (recomputed every frame, so it follows scrolling)
@@ -1067,18 +1102,19 @@ function tourGoal() {
   const r = tourTarget().getBoundingClientRect(), pad = 6, gap = 14, m = 12;
   const pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
   let top = r.bottom + gap, left = Math.min(Math.max(m, r.left), innerWidth - w - m);
-  if (top + h > innerHeight - m) top = r.top - gap - h; // above
-  if (top < m) { // neither fits: tuck it inside the bottom-right of the highlighted area
+  const side = state.tour.side || 'below';
+  if (side === 'above') top = r.top - gap - h;
+  if (side === 'inside') {
     top = Math.min(r.bottom - h - 16, innerHeight - h - m);
     left = Math.min(r.right - w - 16, innerWidth - w - m);
   }
-  if (r.right + gap + w < innerWidth - m && r.height > innerHeight * 0.45) { // tall targets: to the right
+  if (side === 'right') {
     left = r.right + gap;
     top = Math.min(Math.max(m, r.top), innerHeight - h - m);
   }
   return {
     spot: { x: r.left - pad, y: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 },
-    pop: { x: Math.max(m, left), y: Math.max(m, top) },
+    pop: { x: Math.max(m, left), y: Math.min(Math.max(m, top), innerHeight - h - m) }, // always fully on screen
   };
 }
 
@@ -1258,7 +1294,7 @@ function bindUI() {
   $('#f-ticker').innerHTML = ['<button data-t="" class="active">All</button>', ...TICKERS.map(t => `<button data-t="${t}">${t}</button>`)].join('');
   seg($('#f-ticker'), d => { state.news.ticker = d.t; loadNews(); });
   seg($('#f-label'), d => { state.news.label = d.label; loadNews(); });
-  $('#f-search').addEventListener('input', filterNews);
+  $('#f-search').addEventListener('input', searchNews);
 
   $('#examples').innerHTML = EXAMPLES.map(t => `<button class="example">${esc(t)}</button>`).join('');
   $('#examples').addEventListener('click', e => {
