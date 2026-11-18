@@ -309,7 +309,9 @@ const change = t => t.week.net - t.prev.net;
 // a market product must never pass old sentiment off as current
 function renderStale() {
   const hours = (Date.now() - new Date(state.ov.as_of)) / 36e5;
-  $('#stale').hidden = hours < 24;
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem('finmlops.stale') === state.ov.as_of; } catch {}
+  $('#stale').hidden = hours < 24 || dismissed;
   if (hours >= 24) $('#stale-text').textContent = `The newest article is ${Math.floor(hours / 24)} day${hours >= 48 ? 's' : ''} old, so this isn't current sentiment.`;
 }
 
@@ -656,7 +658,18 @@ function showNoData(msg) {
 }
 
 // ---------- theme ----------
-function toggleTheme() {
+function toggleTheme(e) {
+  const btn = $('#theme-btn').getBoundingClientRect();
+  const x = e?.clientX || btn.left + btn.width / 2, y = e?.clientY || btn.top + btn.height / 2;
+  if (document.startViewTransition && !reducedMotion) {
+    document.documentElement.style.setProperty('--vt-x', `${x}px`);
+    document.documentElement.style.setProperty('--vt-y', `${y}px`);
+    document.documentElement.style.setProperty('--vt-r', `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
+    document.startViewTransition(applyTheme);
+  } else applyTheme();
+}
+
+function applyTheme() {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
   store('theme', next);
@@ -1114,6 +1127,7 @@ async function loadModels() {
     $('#tbl-models').innerHTML = messageRow('No registered models yet. Run: uv run python -m scripts.train baseline');
     return;
   }
+  renderKpis(champ);
   $('#tbl-models').innerHTML = `
     <thead><tr><th>Version</th><th>Run</th><th>Registered</th><th class="r">Macro F1</th><th class="r">Accuracy</th><th>Status</th></tr></thead>
     <tbody>${state.models.map(m => `
@@ -1126,6 +1140,21 @@ async function loadModels() {
         <td>${m.champion ? '<span class="badge champ">Champion</span>' : '<span class="badge">Candidate</span>'}</td>
       </tr>`).join('')}
     </tbody>`;
+}
+
+function renderKpis(champ) {
+  const MIN_F1 = 0.6;
+  const f1 = champ?.f1_macro, acc = champ?.accuracy;
+  const bar = v => `<div class="kpi-bar"><i style="width:${Math.min(100, (v ?? 0) * 100)}%"></i><b style="left:${MIN_F1 * 100}%" title="Validation bar: 0.60"></b></div>`;
+  const tiles = [
+    ['Champion', champ ? `v${champ.version}` : '—', champ ? esc(champ.run) : 'none registered', ''],
+    ['Macro F1', f3(f1), f1 == null ? '' : f1 >= MIN_F1 ? 'passes the 0.60 bar' : 'below the 0.60 bar', bar(f1)],
+    ['Accuracy', f3(acc), 'on the evaluation set', bar(acc).replace(/<b[^>]*><\/b>/, '')],
+    ['Versions', String(state.models.length), 'in the registry', ''],
+  ];
+  $('#model-kpis').innerHTML = tiles.map(([label, v, h, extra]) => `
+    <div class="panel kpi"><span class="label">${label}</span><span class="kpi-v num">${v}</span><span class="h">${h}</span>${extra}</div>`).join('');
+  reveal($('#model-kpis'));
 }
 
 function renderModelChart() {
@@ -1199,6 +1228,13 @@ function bindUI() {
     $('#an-text').value = b.textContent;
     analyze(b.textContent);
   });
+  $('#stale-x').addEventListener('click', () => {
+    $('#stale').hidden = true;
+    try { sessionStorage.setItem('finmlops.stale', state.ov?.as_of || ''); } catch {}
+  });
+  const count = () => { $('#an-count').textContent = `${$('#an-text').value.length} / 500`; };
+  $('#an-text').addEventListener('input', count);
+  $('#examples').addEventListener('click', () => setTimeout(count));
   $('#an-form').addEventListener('submit', e => { e.preventDefault(); analyze($('#an-text').value); });
   $('#an-text').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); analyze($('#an-text').value); }

@@ -61,6 +61,7 @@
   <div class="stale" id="stale" role="status" hidden>
     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l6.5 12h-13z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.5v.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
     <span><b>Data is out of date.</b> <span id="stale-text"></span> Run the data pipeline, then <code>python -m frontend.server score</code>.</span>
+    <button class="stale-x" id="stale-x" type="button" aria-label="Dismiss" title="Dismiss">✕</button>
   </div>
 
   <div class="layout">
@@ -169,7 +170,7 @@
             <form id="an-form" class="an-form">
               <textarea id="an-text" rows="5" maxlength="500" placeholder="Paste a financial headline, e.g. “Nvidia beats revenue estimates as data center sales surge”"></textarea>
               <div class="an-row">
-                <span class="muted small">Enter to analyze · Shift+Enter for a new line</span>
+                <span class="muted small"><kbd>↵</kbd> analyze · <kbd>Shift</kbd> <kbd>↵</kbd> new line <span class="an-count num" id="an-count">0 / 500</span></span>
                 <button class="btn" type="submit">Analyze</button>
               </div>
             </form>
@@ -178,13 +179,18 @@
           </div>
           <div class="panel" id="an-result">
             <div class="panel-head">Result</div>
-            <div class="empty">Paste a headline to see the label, the model's confidence, and which words drove it.</div>
+            <div class="an-empty">
+              <div class="an-empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 5.6L20 10.8l-5.8 2.2L12 18.6l-2.2-5.6L4 10.8l5.8-2.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+              <b>Ready when you are</b>
+              <p>Paste a headline or pick an example. You'll see the label, how confident the model is, and which words pushed it there.</p>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- models -->
       <section id="view-models" class="view">
+        <div class="kpis" id="model-kpis"></div>
         <div class="grid">
           <div class="panel">
             <div class="panel-head">Model registry <span class="muted">finbert-sentiment</span></div>
@@ -198,10 +204,10 @@
             <div class="panel">
               <div class="panel-head">Promotion rule</div>
               <ul class="rules">
-                <li><b>Validate.</b> Macro F1 of at least 0.60 on the evaluation set, or the run fails.</li>
-                <li><b>Beat the champion.</b> Higher macro F1, and no ticker more than 0.02 less accurate.</li>
-                <li><b>Ship it.</b> The new model is copied to cloud storage, then becomes the champion.</li>
-                <li><b>Otherwise roll back.</b> The current champion stays live.</li>
+                <li><b>Validate.</b> Macro F1 of at least 0.60 on the gold set, or the run fails.</li>
+                <li><b>A real gain.</b> The macro F1 gain stays above zero across a 95% bootstrap interval, so luck can't promote a model.</li>
+                <li><b>No ticker worse off.</b> No ticker more than 0.02 less accurate than under the champion.</li>
+                <li><b>Ship or roll back.</b> A winner is copied to cloud storage, then becomes the champion; otherwise the champion stays live.</li>
               </ul>
             </div>
           </div>
