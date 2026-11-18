@@ -770,8 +770,12 @@ html { scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) { .splash-logo img, .splash-logo::before, .splash-logo::after { animation: none; } }
 
 /* ================= home / landing ================= */
-body.is-home .layout { grid-template-columns: minmax(0, 1fr); max-width: 1180px; }
-body.is-home .watchlist, body.is-home .stale { display: none; }
+html[data-page="home"] .layout { grid-template-columns: minmax(0, 1fr); max-width: 1180px; }
+html[data-page="home"] .watchlist, html[data-page="home"] .stale { display: none !important; }
+/* the page shown is decided by <html data-page>, set in <head> before the first paint (and by showTab after) */
+html[data-page] .view { display: none; }
+html[data-page="home"] #view-home, html[data-page="dashboard"] #view-dashboard, html[data-page="headlines"] #view-headlines,
+html[data-page="analyzer"] #view-analyzer, html[data-page="models"] #view-models { display: block; }
 #view-home.active { animation: fadeIn .45s var(--ease) both; }
 .hero { position: relative; padding: 72px 8px 40px; text-align: center; }
 .hero > * { position: relative; }
@@ -881,3 +885,21 @@ img, a { -webkit-user-drag: none; user-drag: none; }
 #view-home .cta-band { margin-bottom: 56px; }
 @media (max-width: 600px) { #view-home .cta-band { margin-bottom: 36px; } }
 .eyebrow-emoji { font-size: 14px; line-height: 1; }
+
+/* tour card pointer: a small diamond on the edge facing the target (positioned from JS every frame) */
+.tour-caret {
+  position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; transform: rotate(45deg);
+  background: var(--panel); border: 1px solid var(--border-2); transition: opacity .2s;
+}
+.tour-pop[data-side="below"] .tour-caret { border-right: 0; border-bottom: 0; }
+.tour-pop[data-side="above"] .tour-caret { border-left: 0; border-top: 0; }
+.tour-pop[data-side="right"] .tour-caret { border-top: 0; border-right: 0; }
+.tour-pop[data-side="inside"] .tour-caret { opacity: 0; }
+/* the current page's tab is bright from the first paint (showTab adds .active and the underline once JS runs) */
+html[data-page="home"] .tabs [data-tab="home"], html[data-page="dashboard"] .tabs [data-tab="dashboard"],
+html[data-page="headlines"] .tabs [data-tab="headlines"], html[data-page="analyzer"] .tabs [data-tab="analyzer"],
+html[data-page="models"] .tabs [data-tab="models"] { color: var(--text); }
+/* nav tabs: the active tab already has the blue underline, so keyboard focus is a soft highlight instead of a
+   box outline (which the nav strip clipped into two blue side bars) */
+.tabs button:focus-visible { outline: none; color: var(--text); background: linear-gradient(var(--hover), var(--hover)) center / calc(100% - 6px) 30px no-repeat; border-radius: 8px; }
+.hs-quote { display: inline-flex; align-items: center; gap: 8px; }

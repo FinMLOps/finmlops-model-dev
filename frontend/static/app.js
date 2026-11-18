@@ -116,7 +116,6 @@ function showSkeletons() {
   $('#q-chg').innerHTML = sk('130px');
   $('#q-stats').innerHTML = Array.from({ length: 5 }, () => `<div class="stat">${sk('64px')}${sk('48px', 'lg')}</div>`).join('');
   $('#chart-stats').innerHTML = Array.from({ length: 4 }, () => `<div class="cs">${sk('70px')}${sk('52px', 'lg')}</div>`).join('');
-  $('#hero-strip').innerHTML = TICKERS.map(() => `<span class="hs">${sk('22px', '', '22px')}${sk('44px')}</span>`).join('');
   $('#pulse').innerHTML = TICKERS.map(() => `<div class="pulse-row">${sk('72px', 'lg')}${sk('100%', '', '26px')}</div>`).join('');
   $('#tbl-dash').innerHTML = skRows(6);
   $('#tbl-models').innerHTML = skRows(3);
@@ -458,7 +457,7 @@ async function selectTicker(ticker) {
   $$('.wl-item').forEach(el => el.classList.toggle('active', el.dataset.ticker === ticker));
   $$('.pulse-row[data-row]').forEach(el => el.classList.toggle('active', el.dataset.row === ticker));
   renderQuote();
-  document.title = `${ticker} ${signed(current().week.net)} · FinMLOps Sentiment`;
+  updateTitle();
   renderDaily();
   $('#tbl-dash').innerHTML = skRows(6);
   try {
@@ -850,9 +849,9 @@ async function renderDrawer() {
 const TOUR = [
   { sel: '.watchlist', title: 'Your watchlist', text: 'Seven big tech stocks, each with its <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
   { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
-  { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
-  { sel: '.pulse-panel', title: 'Market pulse', text: 'Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.' },
-  { sel: '.headlines-panel', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
+  { sel: '.chart-panel', align: 'end', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
+  { sel: '.pulse-panel', align: 'center', title: 'Market pulse', text: 'Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.' },
+  { sel: '.headlines-panel', align: 'start', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
   { sel: '.tabs', title: 'More tools', text: '<b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.' },
   { sel: '#status', title: 'The live model', text: `The current champion and its macro F1. Press <kbd>${MOD_K}</kbd> anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.` },
 ];
@@ -1101,8 +1100,11 @@ function setTourSide() {
 function tourGoal() {
   const r = tourTarget().getBoundingClientRect(), pad = 6, gap = 14, m = 12;
   const pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
-  let top = r.bottom + gap, left = Math.min(Math.max(m, r.left), innerWidth - w - m);
-  const side = state.tour.side || 'below';
+  const t = state.tour, side = t.side || 'below', align = t.steps[t.i].align || 'start';
+  // the point on the target the card points at: its left end, middle or right end (40px in from the edge)
+  const anchor = align === 'center' ? r.left + r.width / 2 : align === 'end' ? r.right - 40 : r.left + 40;
+  const ideal = align === 'center' ? anchor - w / 2 : align === 'end' ? r.right - w : r.left;
+  let top = r.bottom + gap, left = Math.min(Math.max(m, ideal), innerWidth - w - m);
   if (side === 'above') top = r.top - gap - h;
   if (side === 'inside') {
     top = Math.min(r.bottom - h - 16, innerHeight - h - m);
@@ -1115,6 +1117,7 @@ function tourGoal() {
   return {
     spot: { x: r.left - pad, y: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 },
     pop: { x: Math.max(m, left), y: Math.min(Math.max(m, top), innerHeight - h - m) }, // always fully on screen
+    side, anchor, targetMidY: r.top + Math.min(r.height, innerHeight) / 2,
   };
 }
 
@@ -1132,7 +1135,16 @@ function tourFrame(now) {
   spot.style.transform = `translate3d(${t.spot.x}px, ${t.spot.y}px, 0)`;
   spot.style.width = `${t.spot.w}px`;
   spot.style.height = `${t.spot.h}px`;
-  $('#tour-pop').style.transform = `translate3d(${t.pop.x}px, ${t.pop.y}px, 0)`;
+  const pop = $('#tour-pop'), caret = $('#tour-caret');
+  pop.style.transform = `translate3d(${t.pop.x}px, ${t.pop.y}px, 0)`;
+  pop.dataset.side = goal.side;
+  if (goal.side === 'right') {
+    caret.style.left = '0px';
+    caret.style.top = `${Math.min(Math.max(18, goal.targetMidY - t.pop.y), pop.offsetHeight - 18)}px`;
+  } else {
+    caret.style.top = goal.side === 'above' ? '100%' : '0px';
+    caret.style.left = `${Math.min(Math.max(22, goal.anchor - t.pop.x), pop.offsetWidth - 22)}px`;
+  }
   t.raf = requestAnimationFrame(tourFrame);
 }
 
@@ -1230,14 +1242,24 @@ function renderModelChart() {
 }
 
 // ---------- navigation ----------
+// the browser tab names the page you're on (and, on the dashboard, the stock and its sentiment)
+const PAGE_TITLES = { home: 'FinMLOps · Market Sentiment', headlines: 'News · FinMLOps', analyzer: 'Analyzer · FinMLOps', models: 'Models · FinMLOps' };
+function updateTitle() {
+  const page = $('.view.active')?.id.slice(5) || 'home';
+  document.title = page === 'dashboard' && state.ov
+    ? `${state.ticker} ${signed(current().week.net)} · FinMLOps`
+    : PAGE_TITLES[page] || PAGE_TITLES.home;
+}
+
 function showTab(name) {
   if (!TABS.includes(name)) name = 'home';
-  document.body.classList.toggle('is-home', name === 'home');
+  document.documentElement.dataset.page = name;
   if (name !== $('.view.active')?.id.slice(5)) scrollTo({ top: 0, behavior: 'instant' });
   history.replaceState(null, '', `#${name}`);
   $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   moveInk();
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  updateTitle();
   if (name === 'headlines' && !state.newsLoaded) loadNews();
   if (name === 'models' && state.models.length) renderModelChart();
   // first visit to the dashboard: offer the tour once
@@ -1258,12 +1280,13 @@ function renderHome() {
     const ref = [...closes].reverse().find(d => d.date <= cut) || closes[0];
     return { close: last.close, change: (last.close / ref.close - 1) * 100 };
   };
-  $('#hero-strip').innerHTML = tickers.map(t => {
-    const m = weekMove(t);
-    const price = m ? `<span class="hs-price num">$${m.close.toFixed(2)}</span><span class="hs-chg num ${tone(m.change)}">${signed(m.change, 1)}%</span>` : '<span class="hs-price muted">no price</span>';
-    return `<button class="hs" data-ticker="${t.ticker}" type="button" title="${t.ticker}: last close and 1-week change">${logo(t.ticker)}<b>${t.ticker}</b>${price}</button>`;
-  }).join('');
-  reveal($('#hero-strip'));
+  // the chips (logo and ticker) are static in the HTML; only each one's price and change are filled in here
+  tickers.forEach(t => {
+    const el = $(`#hero-strip [data-ticker="${t.ticker}"] .hs-quote`), m = weekMove(t);
+    if (!el) return;
+    el.innerHTML = m ? `<span class="hs-price num">$${m.close.toFixed(2)}</span><span class="hs-chg num ${tone(m.change)}">${signed(m.change, 1)}%</span>` : '<span class="hs-price muted">no price</span>';
+    reveal(el);
+  });
 }
 
 function bindUI() {
@@ -1411,6 +1434,7 @@ function bindUI() {
 async function init() {
   setupCharts();
   bindUI();
+  showTab(location.hash.slice(1)); // the right tab is highlighted right away, not after the data arrives
   showSkeletons();
   const models = loadModels();
   try {

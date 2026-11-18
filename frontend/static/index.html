@@ -14,6 +14,8 @@
   <script>
     // set the theme before the page paints, so a light-theme visitor never sees a dark flash
     try { document.documentElement.dataset.theme = localStorage.getItem('finmlops.theme') || 'dark'; } catch (e) {}
+    // pick the page before the first paint too, so a hard refresh never flashes another page's layout
+    document.documentElement.dataset.page = ['dashboard', 'headlines', 'analyzer', 'models'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home';
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -28,7 +30,7 @@
       <div class="splash-logo"><img src="img/android-chrome-192x192.png" alt="" width="88" height="88"></div>
       <div class="splash-brand">
         <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
-        FinMLOps<span>Sentiment</span>
+        FinMLOps
       </div>
       <div class="splash-bar"><i></i></div>
       <p class="splash-msg" id="splash-msg">Loading market sentiment…</p>
@@ -38,10 +40,10 @@
   <header class="topbar">
     <div class="brand" id="brand" role="link" tabindex="0" title="Home">
       <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
-      FinMLOps<span class="brand-sub">Sentiment</span>
+      FinMLOps
     </div>
     <nav class="tabs">
-      <button data-tab="home" class="active">Home</button>
+      <button data-tab="home">Home</button>
       <button data-tab="dashboard">Dashboard</button>
       <button data-tab="headlines">News</button>
       <button data-tab="analyzer">Analyzer</button>
@@ -85,7 +87,15 @@
             <button class="btn btn-lg" data-go="dashboard" type="button">Open the dashboard <span aria-hidden="true">→</span></button>
             <button class="btn ghost btn-lg" id="hero-how" type="button">How it works</button>
           </div>
-          <div class="hero-strip" id="hero-strip" aria-label="Closing price and its change over the last week"></div>
+          <div class="hero-strip" id="hero-strip" aria-label="Closing price and its change over the last week">
+            <button class="hs" data-ticker="AAPL" type="button" title="AAPL: last close and 1-week change"><span class="logo"><img src="logos/aapl.svg" alt=""></span><b>AAPL</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="MSFT" type="button" title="MSFT: last close and 1-week change"><span class="logo"><img src="logos/msft.svg" alt=""></span><b>MSFT</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="NVDA" type="button" title="NVDA: last close and 1-week change"><span class="logo"><img src="logos/nvda.svg" alt=""></span><b>NVDA</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="GOOGL" type="button" title="GOOGL: last close and 1-week change"><span class="logo"><img src="logos/googl.svg" alt=""></span><b>GOOGL</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="META" type="button" title="META: last close and 1-week change"><span class="logo"><img src="logos/meta.svg" alt=""></span><b>META</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="AMZN" type="button" title="AMZN: last close and 1-week change"><span class="logo"><img src="logos/amzn.svg" alt=""></span><b>AMZN</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+            <button class="hs" data-ticker="TSLA" type="button" title="TSLA: last close and 1-week change"><span class="logo"><img src="logos/tsla.svg" alt=""></span><b>TSLA</b><span class="hs-quote"><span class="sk" style="width:110px"></span></span></button>
+          </div>
           <div class="hero-facts"><a class="powered" href="https://huggingface.co/ProsusAI/finbert" target="_blank" rel="noopener">Powered by <b>FinBERT</b> <span aria-hidden="true">↗</span></a></div>
         </div>
 
@@ -322,6 +332,7 @@
     <div class="tour-layer"></div>
     <div class="tour-spot" id="tour-spot"></div>
     <div class="tour-pop" id="tour-pop" role="dialog" aria-labelledby="tour-title" aria-live="polite">
+      <span class="tour-caret" id="tour-caret" aria-hidden="true"></span>
       <div class="tour-body" id="tour-body">
         <div class="tour-step" id="tour-step"></div>
         <h3 id="tour-title"></h3>
