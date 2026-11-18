@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>FinMLOps · Market Sentiment</title>
-  <meta name="description" content="News sentiment for the Magnificent 7, labeled by a fine-tuned FinBERT model.">
+  <meta name="description" content="A student-built proof of concept that reads financial news and measures sentiment for seven big tech stocks.">
   <link rel="icon" href="img/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
@@ -18,7 +18,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="preload" as="image" href="img/stonks.png">
   <link rel="preload" as="image" href="img/android-chrome-192x192.png">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -26,7 +25,7 @@
 <body>
   <div class="splash" id="splash" role="status" aria-live="polite">
     <div class="splash-card">
-      <img class="splash-img" src="img/stonks.png" alt="Stonks meme: a man in a suit in front of a rising stock chart" width="320" height="240">
+      <div class="splash-logo"><img src="img/android-chrome-192x192.png" alt="" width="88" height="88"></div>
       <div class="splash-brand">
         <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
         FinMLOps<span>Sentiment</span>
@@ -37,12 +36,13 @@
   </div>
 
   <header class="topbar">
-    <div class="brand">
+    <div class="brand" id="brand" role="link" tabindex="0" title="Home">
       <img class="mark brand-logo" src="img/android-chrome-192x192.png" alt="" width="30" height="30">
       FinMLOps<span class="brand-sub">Sentiment</span>
     </div>
     <nav class="tabs">
-      <button data-tab="dashboard" class="active">Dashboard</button>
+      <button data-tab="home" class="active">Home</button>
+      <button data-tab="dashboard">Dashboard</button>
       <button data-tab="headlines">News</button>
       <button data-tab="analyzer">Analyzer</button>
       <button data-tab="models">Models</button>
@@ -66,7 +66,7 @@
 
   <div class="layout">
     <aside class="panel watchlist">
-      <div class="panel-head">Watchlist <span class="muted">Magnificent 7</span></div>
+      <div class="panel-head">Watchlist <span class="muted">7 tech stocks</span></div>
       <div class="wl-row wl-cols"><span>Ticker</span><span>14D</span><span class="r">Net 7D</span><span class="r">Chg</span></div>
       <ul id="watchlist"></ul>
       <p class="wl-foot">Net sentiment = % positive − % negative articles, labeled by the champion model. Change is vs the 7 days before.</p>
@@ -74,8 +74,71 @@
     </aside>
 
     <main>
+      <!-- home -->
+      <section id="view-home" class="view active">
+        <div class="hero">
+          <div class="hero-orb" aria-hidden="true"></div>
+          <span class="eyebrow"><span class="eyebrow-emoji" aria-hidden="true">📈</span>Reading the market's mood</span>
+          <h1>Markets move on words.<br><span class="grad">We read them for you.</span></h1>
+          <p class="lede">A language model reads the financial news, labels every headline positive, neutral or negative, and turns thousands of them into one signal per stock. This prototype tracks seven tech stocks to keep things simple.</p>
+          <div class="hero-cta">
+            <button class="btn btn-lg" data-go="dashboard" type="button">Open the dashboard <span aria-hidden="true">→</span></button>
+            <button class="btn ghost btn-lg" id="hero-how" type="button">How it works</button>
+          </div>
+          <div class="hero-strip" id="hero-strip" aria-label="Closing price and its change over the last week"></div>
+          <div class="hero-facts"><a class="powered" href="https://huggingface.co/ProsusAI/finbert" target="_blank" rel="noopener">Powered by <b>FinBERT</b> <span aria-hidden="true">↗</span></a></div>
+        </div>
+
+        <div class="home-grid">
+          <div class="panel home-card why">
+            <span class="label">Why we built this</span>
+            <h2>Whoever reads the news first gets the edge.</h2>
+            <p>This project started with a New York Times story about access to Truth Social's API. Early access to market-moving news lets a few players place winning bets before everyone else has even seen the headline.</p>
+            <p>We're students, and we don't have $100K lying around for that kind of access. So we built what we could: a pipeline that collects free market news, a model that reads every headline, and a dashboard that turns them into a clear signal for each stock.</p>
+            <div class="poc">
+              <b>A proof of concept, not a trading tool.</b>
+              We use free news APIs, so headlines arrive hours late rather than in real time. With a paid, real-time feed, the same pipeline could score news the moment it breaks. FinBERT is just our starting model; stronger models can be dropped in through the same promotion rule.
+            </div>
+            <a class="source" href="https://www.nytimes.com/2026/07/16/business/energy-environment/trump-truth-social-api-access.html" target="_blank" rel="noopener">
+              <span class="source-k">The story that started it</span>
+              <span class="source-t">The New York Times · July 16, 2026</span>
+              <span class="source-go" aria-hidden="true">↗</span>
+            </a>
+          </div>
+
+          <div class="panel home-card how" id="how">
+            <span class="label">How it works</span>
+            <ol class="steps">
+              <li><b>Collect.</b> Airflow pulls news from the free Finnhub and Marketaux APIs, checks every batch against a schema, and versions each snapshot with DVC.</li>
+              <li><b>Read.</b> A language model, FinBERT for now, labels each headline for its company, with a confidence score and the words that drove it.</li>
+              <li><b>Prove.</b> A new model replaces the champion only if it's significantly better on held-out news and no stock gets worse.</li>
+              <li><b>Show.</b> This dashboard: daily sentiment against the price, a two-week market pulse, and the reasoning behind every label.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="explore">
+          <button class="panel tool" data-go="dashboard" type="button"><span class="tool-ico" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M2 13.5h12M3.5 11l3-3.5 2.5 2 4-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><b>Dashboard</b><span>Sentiment vs. price for each stock, plus the market pulse.</span><i>→</i></button>
+          <button class="panel tool" data-go="headlines" type="button"><span class="tool-ico" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span><b>News</b><span>Every scored headline, filterable by stock and label.</span><i>→</i></button>
+          <button class="panel tool" data-go="analyzer" type="button"><span class="tool-ico" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 2l1.4 3.6L13 7l-3.6 1.4L8 12l-1.4-3.6L3 7l3.6-1.4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><b>Analyzer</b><span>Paste any headline and see what the model thinks, and why.</span><i>→</i></button>
+          <button class="panel tool" data-go="models" type="button"><span class="tool-ico" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M8 2l5 3v6l-5 3-5-3V5z M3 5l5 3 5-3 M8 8v6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><b>Models</b><span>The champion, the candidates, and the rule they must pass.</span><i>→</i></button>
+        </div>
+
+        <div class="cta-band">
+          <div>
+            <h2>Have a headline in mind?</h2>
+            <p>Paste it into the analyzer and see how the model reads it, word by word.</p>
+          </div>
+          <div class="cta-actions">
+            <button class="btn btn-lg" data-go="analyzer" type="button">Try the analyzer <span aria-hidden="true">→</span></button>
+            <button class="btn ghost btn-lg" data-go="headlines" type="button">Browse the news</button>
+          </div>
+        </div>
+
+      </section>
+
       <!-- dashboard -->
-      <section id="view-dashboard" class="view active">
+      <section id="view-dashboard" class="view">
         <div class="panel quote">
           <div class="quote-id">
             <span id="q-logo"></span>

@@ -9,7 +9,7 @@ const EXAMPLES = [
   'Apple to hold annual shareholder meeting in February',
 ];
 
-const TABS = ['dashboard', 'headlines', 'analyzer', 'models'];
+const TABS = ['home', 'dashboard', 'headlines', 'analyzer', 'models'];
 const MOD_K = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -116,6 +116,7 @@ function showSkeletons() {
   $('#q-chg').innerHTML = sk('130px');
   $('#q-stats').innerHTML = Array.from({ length: 5 }, () => `<div class="stat">${sk('64px')}${sk('48px', 'lg')}</div>`).join('');
   $('#chart-stats').innerHTML = Array.from({ length: 4 }, () => `<div class="cs">${sk('70px')}${sk('52px', 'lg')}</div>`).join('');
+  $('#hero-strip').innerHTML = TICKERS.map(() => `<span class="hs">${sk('22px', '', '22px')}${sk('44px')}</span>`).join('');
   $('#pulse').innerHTML = TICKERS.map(() => `<div class="pulse-row">${sk('72px', 'lg')}${sk('100%', '', '26px')}</div>`).join('');
   $('#tbl-dash').innerHTML = skRows(6);
   $('#tbl-models').innerHTML = skRows(3);
@@ -243,27 +244,37 @@ function reveal(el) {
 }
 
 // ---------- splash ----------
+// shown only when loading is slow: a fast load goes straight to the page and its skeletons
+const SPLASH_DELAY_MS = 400; // don't show it at all for loads faster than this
+const SPLASH_MIN_MS = 700;   // once shown, keep it long enough not to flash
 const SPLASH_MESSAGES = ['Loading market sentiment…', 'Reading the headlines…', 'Asking FinBERT how it feels…', 'Lining up the charts…'];
-const splashStart = performance.now();
-const splashTimer = setInterval(() => {
-  const el = $('#splash-msg');
-  el.style.opacity = '0';
-  setTimeout(() => {
-    el.textContent = SPLASH_MESSAGES[(SPLASH_MESSAGES.indexOf(el.textContent) + 1) % SPLASH_MESSAGES.length];
-    el.style.opacity = '1';
-  }, 200);
-}, 1400);
+let splashShownAt = 0, splashTimer = 0;
+const splashDelay = setTimeout(() => {
+  splashShownAt = performance.now();
+  $('#splash').classList.add('show');
+  splashTimer = setInterval(() => {
+    const el = $('#splash-msg');
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.textContent = SPLASH_MESSAGES[(SPLASH_MESSAGES.indexOf(el.textContent) + 1) % SPLASH_MESSAGES.length];
+      el.style.opacity = '1';
+    }, 200);
+  }, 1400);
+}, SPLASH_DELAY_MS);
 
-const SPLASH_MIN_MS = 3000;
-
-// fade the splash out, but keep it up at least SPLASH_MIN_MS; resolves once it's gone
+// resolves once the splash is gone (immediately if it never appeared)
 function hideSplash() {
-  const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStart));
+  clearTimeout(splashDelay);
+  const el = $('#splash');
+  if (!splashShownAt) {
+    el.remove();
+    return Promise.resolve();
+  }
+  const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashShownAt));
   return new Promise(resolve => setTimeout(() => {
     clearInterval(splashTimer);
-    const el = $('#splash');
     el.classList.add('hide');
-    setTimeout(() => { el.remove(); resolve(); }, 500);
+    setTimeout(() => { el.remove(); resolve(); }, 450);
   }, wait));
 }
 
@@ -829,7 +840,7 @@ async function renderDrawer() {
 
 // ---------- guided tour ----------
 const TOUR = [
-  { sel: '.watchlist', title: 'Your watchlist', text: 'The Magnificent 7 with each one\'s <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
+  { sel: '.watchlist', title: 'Your watchlist', text: 'Seven big tech stocks, each with its <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
   { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
   { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
   { sel: '.pulse-panel', title: 'Market pulse', text: 'Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.' },
@@ -873,7 +884,7 @@ function paletteCommands() {
       selectTicker(t.ticker);
     },
   }));
-  [['dashboard', 'Dashboard'], ['headlines', 'News feed'], ['analyzer', 'Analyzer'], ['models', 'Models']].forEach(([id, name]) => cmds.push({
+  [['home', 'Home'], ['dashboard', 'Dashboard'], ['headlines', 'News feed'], ['analyzer', 'Analyzer'], ['models', 'Models']].forEach(([id, name]) => cmds.push({
     group: 'Go to', title: name, keys: `${name} ${id}`, icon: ICON.go, run: () => showTab(id),
   }));
   const actions = [
@@ -1184,16 +1195,44 @@ function renderModelChart() {
 
 // ---------- navigation ----------
 function showTab(name) {
-  if (!TABS.includes(name)) name = 'dashboard';
+  if (!TABS.includes(name)) name = 'home';
+  document.body.classList.toggle('is-home', name === 'home');
+  if (name !== $('.view.active')?.id.slice(5)) scrollTo({ top: 0, behavior: 'instant' });
   history.replaceState(null, '', `#${name}`);
   $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   moveInk();
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   if (name === 'headlines' && !state.newsLoaded) loadNews();
   if (name === 'models' && state.models.length) renderModelChart();
+  // first visit to the dashboard: offer the tour once
+  if (name === 'dashboard' && state.ov && !state.tour && !store('toured')) {
+    setTimeout(() => { if (!state.tour && !store('toured') && $('#view-dashboard').classList.contains('active')) startTour(); }, 500);
+  }
+}
+
+// ---------- home ----------
+function renderHome() {
+  const tickers = state.ov.tickers;
+  // last close and its change vs the last close at least a week earlier
+  const weekMove = t => {
+    const closes = t.daily.filter(d => d.close != null);
+    if (closes.length < 2) return null;
+    const last = closes[closes.length - 1];
+    const cut = new Date(new Date(last.date) - 7 * 864e5).toISOString().slice(0, 10);
+    const ref = [...closes].reverse().find(d => d.date <= cut) || closes[0];
+    return { close: last.close, change: (last.close / ref.close - 1) * 100 };
+  };
+  $('#hero-strip').innerHTML = tickers.map(t => {
+    const m = weekMove(t);
+    const price = m ? `<span class="hs-price num">$${m.close.toFixed(2)}</span><span class="hs-chg num ${tone(m.change)}">${signed(m.change, 1)}%</span>` : '<span class="hs-price muted">no price</span>';
+    return `<button class="hs" data-ticker="${t.ticker}" type="button" title="${t.ticker}: last close and 1-week change">${logo(t.ticker)}<b>${t.ticker}</b>${price}</button>`;
+  }).join('');
+  reveal($('#hero-strip'));
 }
 
 function bindUI() {
+  // selected text, links and logos can still be copied, but not dragged around the page
+  document.addEventListener('dragstart', e => e.preventDefault());
   $$('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
   addEventListener('resize', moveInk);
   document.fonts?.ready.then(moveInk);
@@ -1290,6 +1329,13 @@ function bindUI() {
   });
 
   $('#dash-all').addEventListener('click', () => showTab('headlines'));
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]');
+    if (go) showTab(go.dataset.go);
+  });
+  $('#hero-how').addEventListener('click', () => $('#how').scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' }));
+  $('#brand').addEventListener('click', () => showTab('home'));
+  $('#brand').addEventListener('keydown', e => { if (e.key === 'Enter') showTab('home'); });
   bindPulse();
 
   // guided tour
@@ -1342,15 +1388,14 @@ async function init() {
     renderStale();
     renderWatchlist();
     renderPulse();
+    renderHome();
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);
   }
   await models;
   showTab(location.hash.slice(1));
-  // first visit: show the tour once the splash is gone
   await splashGone;
-  if (state.ov && !store('toured') && location.hash.slice(1) === 'dashboard') setTimeout(startTour, 400);
 }
 
 init();
