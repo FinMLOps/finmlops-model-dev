@@ -84,8 +84,23 @@
             </div>
           </div>
           <div class="quote-main">
+            <div class="gauge" id="q-gauge" aria-hidden="true">
+              <svg viewBox="0 0 100 58">
+                <defs><linearGradient id="g-arc" x1="0" x2="1" y1="0" y2="0">
+                  <stop offset="0" style="stop-color: var(--neg)"/><stop offset=".5" style="stop-color: var(--neu)"/><stop offset="1" style="stop-color: var(--pos)"/>
+                </linearGradient></defs>
+                <path class="g-track" d="M10 50 A40 40 0 0 1 90 50"/>
+                <path class="g-arc" d="M10 50 A40 40 0 0 1 90 50"/>
+                <g class="g-needle"><line x1="50" y1="50" x2="50" y2="17"/><circle cx="50" cy="50" r="4.5"/></g>
+              </svg>
+            </div>
             <div class="big num" id="q-net">—</div>
             <div class="quote-sub"><span id="q-chg"></span><span class="label">Net sentiment · 7D</span></div>
+          </div>
+          <div class="quote-mix">
+            <div class="qm-head"><span class="label">News mix · 7D</span><span class="qm-mood" id="q-mood"></span></div>
+            <div class="mixbar" id="q-mix" aria-hidden="true"></div>
+            <div class="qm-legend" id="q-mixl"></div>
           </div>
           <div class="quote-stats" id="q-stats"></div>
         </div>
@@ -108,6 +123,14 @@
             <div class="chart-box main"><canvas id="chart-daily"></canvas></div>
             <div class="chart-box vol"><canvas id="chart-volume"></canvas></div>
           </div>
+        </div>
+
+        <div class="panel pulse-panel">
+          <div class="panel-head">Market pulse <span class="muted">net sentiment by day, last 14 days</span>
+            <div class="head-right pulse-legend" aria-hidden="true"><span>Negative</span><i></i><span>Positive</span></div>
+          </div>
+          <div class="pulse" id="pulse"></div>
+          <div class="pulse-tip" id="pulse-tip" hidden></div>
         </div>
 
         <div class="panel headlines-panel">
@@ -188,7 +211,7 @@
   </div>
 
   <footer class="footer">
-    <div><span>FinMLOps</span><span>FinBERT fine-tuned with LoRA</span><span>News from Finnhub and Marketaux</span></div>
+    <div><span>FinMLOps © 2026</span></div>
     <div><span>Sentiment is model output, not investment advice</span></div>
   </footer>
 

@@ -116,6 +116,7 @@ function showSkeletons() {
   $('#q-chg').innerHTML = sk('130px');
   $('#q-stats').innerHTML = Array.from({ length: 5 }, () => `<div class="stat">${sk('64px')}${sk('48px', 'lg')}</div>`).join('');
   $('#chart-stats').innerHTML = Array.from({ length: 4 }, () => `<div class="cs">${sk('70px')}${sk('52px', 'lg')}</div>`).join('');
+  $('#pulse').innerHTML = TICKERS.map(() => `<div class="pulse-row">${sk('72px', 'lg')}${sk('100%', '', '26px')}</div>`).join('');
   $('#tbl-dash').innerHTML = skRows(6);
   $('#tbl-models').innerHTML = skRows(3);
   skChart('chart-daily');
@@ -338,6 +339,81 @@ function renderWatchlist() {
     </li>`).join('');
 }
 
+// ---------- market pulse: every ticker x the last 14 days ----------
+const PULSE_DAYS = 14;
+const PULSE_FULL = 60; // |net| at which a cell reaches full colour
+
+function pulseDates() {
+  return [...new Set(state.ov.tickers.flatMap(t => t.daily.map(d => d.date)))].sort().slice(-PULSE_DAYS);
+}
+
+function renderPulse() {
+  const dates = pulseDates();
+  const el = $('#pulse');
+  el.style.setProperty('--n', dates.length);
+  const head = dates.map((d, i) => {
+    const date = new Date(d + 'T00:00:00Z'), n = date.getUTCDate();
+    const month = i === 0 || n === 1 ? date.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : '';
+    return `<span>${month ? `<em>${month}</em>` : ''}${n}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="pulse-row pulse-head"><span></span>${head}</div>` + state.ov.tickers.map(t => {
+    const by = Object.fromEntries(t.daily.map(r => [r.date, r]));
+    return `<div class="pulse-row${t.ticker === state.ticker ? ' active' : ''}" data-row="${t.ticker}">
+      <button class="pulse-tkr" data-ticker="${t.ticker}" type="button">${logo(t.ticker)}<b>${t.ticker}</b></button>
+      ${dates.map((d, i) => {
+        const r = by[d];
+        if (!r) return '<span class="cell none"></span>';
+        const v = Math.min(1, Math.abs(r.net) / PULSE_FULL).toFixed(2);
+        return `<button class="cell ${tone(r.net)}" type="button" style="--v:${v};--i:${i}" data-t="${t.ticker}" data-d="${d}"
+          aria-label="${t.ticker}, ${day(d)}: net ${signed(r.net)}, ${r.articles} articles"><span class="num">${signed(Math.round(r.net), 0)}</span></button>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+const pulseRow = cell => state.ov.tickers.find(t => t.ticker === cell.dataset.t).daily.find(r => r.date === cell.dataset.d);
+
+function showPulseTip(cell) {
+  const tip = $('#pulse-tip'), r = pulseRow(cell), top = r.top_positive || r.top_negative;
+  tip.innerHTML = `
+    <div class="pt-head">${logo(cell.dataset.t)}<b>${cell.dataset.t}</b><span class="muted">${day(r.date)}</span></div>
+    <div class="pt-net num ${tone(r.net)}">${signed(r.net)} <span class="muted">net</span></div>
+    <div class="pt-mix">${LABELS.map(l => `<span class="bg-${l}" style="width:${pct(r[l], r.articles)}%"></span>`).join('')}</div>
+    <div class="pt-row muted"><span>${r.articles} articles</span><span>${pct(r.positive, r.articles).toFixed(0)}% pos · ${pct(r.negative, r.articles).toFixed(0)}% neg</span></div>
+    ${top ? `<div class="pt-hl">${esc(trunc(top.title, 90))}</div><div class="pt-foot">Click to read the day's top headlines</div>` : ''}`;
+  tip.hidden = false;
+  const panel = $('.pulse-panel').getBoundingClientRect(), c = cell.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = c.left - panel.left + c.width / 2 - w / 2;
+  x = Math.max(8, Math.min(x, panel.width - w - 8));
+  const above = c.top - panel.top - h - 10;
+  const y = above > 0 ? above : c.bottom - panel.top + 10;
+  tip.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+function bindPulse() {
+  const el = $('#pulse');
+  el.addEventListener('mouseover', e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (cell) showPulseTip(cell);
+  });
+  el.addEventListener('focusin', e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (cell) showPulseTip(cell);
+  });
+  el.addEventListener('mouseleave', () => { $('#pulse-tip').hidden = true; });
+  el.addEventListener('focusout', () => { $('#pulse-tip').hidden = true; });
+  el.addEventListener('click', async e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (!cell) return;
+    const r = pulseRow(cell), list = [r.top_positive, r.top_negative].filter(Boolean);
+    $('#pulse-tip').hidden = true;
+    if (state.ticker !== cell.dataset.t) selectTicker(cell.dataset.t);
+    if (list.length) openDrawer(list, r.net < 0 && r.top_negative ? list.indexOf(r.top_negative) : 0);
+    else toast(`No headlines for ${cell.dataset.t} on ${day(r.date)}.`);
+  });
+}
+
 function renderTable(el, rows) {
   if (!rows.length) {
     el.innerHTML = messageRow('No headlines match.');
@@ -367,6 +443,7 @@ async function selectTicker(ticker) {
   state.ticker = ticker;
   store('ticker', ticker);
   $$('.wl-item').forEach(el => el.classList.toggle('active', el.dataset.ticker === ticker));
+  $$('.pulse-row[data-row]').forEach(el => el.classList.toggle('active', el.dataset.row === ticker));
   renderQuote();
   document.title = `${ticker} ${signed(current().week.net)} · FinMLOps Sentiment`;
   renderDaily();
@@ -390,6 +467,13 @@ function renderQuote() {
   $('#q-net').className = `big num ${tone(w.net)}`;
   countTo($('#q-net'), 'q-net', w.net, v => signed(v));
   $('#q-chg').innerHTML = `<span class="chip ${tone(d)}">${arrow(d)} ${signed(d)} vs prior 7D</span>`;
+  $('#q-gauge').style.setProperty('--a', `${Math.max(-1, Math.min(1, w.net / 100)) * 90}deg`);
+  $('.quote').dataset.mood = tone(w.net);
+  $('#q-mix').innerHTML = LABELS.map(l => `<span class="bg-${l}" style="width:${pct(w[l], w.articles)}%"></span>`).join('');
+  $('#q-mixl').innerHTML = LABELS.map(l => `<span><i class="bg-${l}"></i>${cap(l)} ${pct(w[l], w.articles).toFixed(0)}%</span>`).join('');
+  const mood = w.net >= 15 ? ['Bullish', 'up'] : w.net >= 5 ? ['Leaning positive', 'up'] : w.net <= -15 ? ['Bearish', 'down'] : w.net <= -5 ? ['Leaning negative', 'down'] : ['Mixed', 'flat'];
+  $('#q-mood').className = `qm-mood ${mood[1]}`;
+  $('#q-mood').textContent = mood[0];
   const int = v => Math.round(v).toLocaleString('en-US');
   const percent = v => `${v.toFixed(0)}%`;
   const stats = [
@@ -735,6 +819,7 @@ const TOUR = [
   { sel: '.watchlist', title: 'Your watchlist', text: 'The Magnificent 7 with each one\'s <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
   { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
   { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
+  { sel: '.pulse-panel', title: 'Market pulse', text: 'Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.' },
   { sel: '.headlines-panel', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
   { sel: '.tabs', title: 'More tools', text: '<b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.' },
   { sel: '#status', title: 'The live model', text: `The current champion and its macro F1. Press <kbd>${MOD_K}</kbd> anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.` },
@@ -1169,6 +1254,7 @@ function bindUI() {
   });
 
   $('#dash-all').addEventListener('click', () => showTab('headlines'));
+  bindPulse();
 
   // guided tour
   $('#tour-btn').addEventListener('click', startTour);
@@ -1219,6 +1305,7 @@ async function init() {
     renderAsOf();
     renderStale();
     renderWatchlist();
+    renderPulse();
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);
