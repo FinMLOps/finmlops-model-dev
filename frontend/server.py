@@ -18,6 +18,7 @@ import pandas as pd
 import uvicorn
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from mlflow import MlflowClient
 from pydantic import BaseModel
@@ -37,6 +38,17 @@ NAMES = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "GOOGL": "Alpha
 MAX_CHARS = 500  # longest headline the Analyzer takes; each word costs one extra model pass
 
 app = FastAPI(title="FinMLOps sentiment")
+app.add_middleware(GZipMiddleware, minimum_size=1000)  # the overview JSON shrinks about 5x
+
+
+@app.middleware("http")
+async def revalidate(request, call_next):
+    """browsers recheck the page, scripts and images on every load (a cheap 304 when unchanged), so an edited
+    logo or stylesheet shows up on a normal refresh instead of hours later"""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 _model = {"version": None, "parts": None}
 _model_lock = threading.Lock()  # requests run in parallel threads; only one of them may (re)load the model
 
@@ -152,6 +164,13 @@ def daily(df, closes):
 @app.get("/api/overview")
 def overview():
     """per ticker: last 7 days, the 7 days before, and the daily series"""
+    news()  # 503 if there are no predictions yet
+    return build_overview(PRED_PATH.stat().st_mtime_ns, PRICE_PATH.stat().st_mtime_ns if PRICE_PATH.exists() else 0)
+
+
+@lru_cache(maxsize=1)
+def build_overview(news_mtime, price_mtime):
+    """computed once per version of the two files, not on every page load"""
     df = news()
     end = df["published"].max()
     week_ago, two_weeks_ago = end - pd.Timedelta(days=7), end - pd.Timedelta(days=14)
@@ -177,7 +196,8 @@ def headlines(ticker: str = "", label: str = "", q: str = "", limit: int = 50):
     if label:
         df = df[df["pred"] == label]
     if q:
-        df = df[df["title"].str.contains(q, case=False, regex=False)]
+        df = df[df["title"].str.contains(q, case=False, regex=False)
+                | df["publisher"].fillna("").str.contains(q, case=False, regex=False)]
     df = df.sort_values("published", ascending=False).head(limit)
     return [article(r) for r in df.itertuples()]
 

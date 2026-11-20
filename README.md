@@ -16,6 +16,8 @@ uv sync --extra cpu
 uv run python -m frontend.server             # http://localhost:8000
 ```
 
+A Next.js version of the same dashboard, built for deploying on Google Cloud, is in [`web/`](web/README.md).
+
 ![The FinMLOps dashboard: NVDA's daily net sentiment against its closing price, the Magnificent 7 watchlist and the latest headlines](frontend/dashboard.png)
 
 ## Team

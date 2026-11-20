@@ -9,7 +9,7 @@ const EXAMPLES = [
   'Apple to hold annual shareholder meeting in February',
 ];
 
-const TABS = ['dashboard', 'headlines', 'analyzer', 'models'];
+const TABS = ['home', 'dashboard', 'headlines', 'analyzer', 'models'];
 const MOD_K = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -116,6 +116,7 @@ function showSkeletons() {
   $('#q-chg').innerHTML = sk('130px');
   $('#q-stats').innerHTML = Array.from({ length: 5 }, () => `<div class="stat">${sk('64px')}${sk('48px', 'lg')}</div>`).join('');
   $('#chart-stats').innerHTML = Array.from({ length: 4 }, () => `<div class="cs">${sk('70px')}${sk('52px', 'lg')}</div>`).join('');
+  $('#pulse').innerHTML = TICKERS.map(() => `<div class="pulse-row">${sk('72px', 'lg')}${sk('100%', '', '26px')}</div>`).join('');
   $('#tbl-dash').innerHTML = skRows(6);
   $('#tbl-models').innerHTML = skRows(3);
   skChart('chart-daily');
@@ -242,27 +243,37 @@ function reveal(el) {
 }
 
 // ---------- splash ----------
+// shown only when loading is slow: a fast load goes straight to the page and its skeletons
+const SPLASH_DELAY_MS = 400; // don't show it at all for loads faster than this
+const SPLASH_MIN_MS = 700;   // once shown, keep it long enough not to flash
 const SPLASH_MESSAGES = ['Loading market sentiment…', 'Reading the headlines…', 'Asking FinBERT how it feels…', 'Lining up the charts…'];
-const splashStart = performance.now();
-const splashTimer = setInterval(() => {
-  const el = $('#splash-msg');
-  el.style.opacity = '0';
-  setTimeout(() => {
-    el.textContent = SPLASH_MESSAGES[(SPLASH_MESSAGES.indexOf(el.textContent) + 1) % SPLASH_MESSAGES.length];
-    el.style.opacity = '1';
-  }, 200);
-}, 1400);
+let splashShownAt = 0, splashTimer = 0;
+const splashDelay = setTimeout(() => {
+  splashShownAt = performance.now();
+  $('#splash').classList.add('show');
+  splashTimer = setInterval(() => {
+    const el = $('#splash-msg');
+    el.style.opacity = '0';
+    setTimeout(() => {
+      el.textContent = SPLASH_MESSAGES[(SPLASH_MESSAGES.indexOf(el.textContent) + 1) % SPLASH_MESSAGES.length];
+      el.style.opacity = '1';
+    }, 200);
+  }, 1400);
+}, SPLASH_DELAY_MS);
 
-const SPLASH_MIN_MS = 3000;
-
-// fade the splash out, but keep it up at least SPLASH_MIN_MS; resolves once it's gone
+// resolves once the splash is gone (immediately if it never appeared)
 function hideSplash() {
-  const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashStart));
+  clearTimeout(splashDelay);
+  const el = $('#splash');
+  if (!splashShownAt) {
+    el.remove();
+    return Promise.resolve();
+  }
+  const wait = Math.max(0, SPLASH_MIN_MS - (performance.now() - splashShownAt));
   return new Promise(resolve => setTimeout(() => {
     clearInterval(splashTimer);
-    const el = $('#splash');
     el.classList.add('hide');
-    setTimeout(() => { el.remove(); resolve(); }, 500);
+    setTimeout(() => { el.remove(); resolve(); }, 450);
   }, wait));
 }
 
@@ -308,7 +319,9 @@ const change = t => t.week.net - t.prev.net;
 // a market product must never pass old sentiment off as current
 function renderStale() {
   const hours = (Date.now() - new Date(state.ov.as_of)) / 36e5;
-  $('#stale').hidden = hours < 24;
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem('finmlops.stale') === state.ov.as_of; } catch {}
+  $('#stale').hidden = hours < 24 || dismissed;
   if (hours >= 24) $('#stale-text').textContent = `The newest article is ${Math.floor(hours / 24)} day${hours >= 48 ? 's' : ''} old, so this isn't current sentiment.`;
 }
 
@@ -336,6 +349,81 @@ function renderWatchlist() {
       <span class="num ${tone(t.week.net)}">${signed(t.week.net)}</span>
       <span class="num ${tone(change(t))}">${signed(change(t))}</span>
     </li>`).join('');
+}
+
+// ---------- market pulse: every ticker x the last 14 days ----------
+const PULSE_DAYS = 14;
+const PULSE_FULL = 60; // |net| at which a cell reaches full colour
+
+function pulseDates() {
+  return [...new Set(state.ov.tickers.flatMap(t => t.daily.map(d => d.date)))].sort().slice(-PULSE_DAYS);
+}
+
+function renderPulse() {
+  const dates = pulseDates();
+  const el = $('#pulse');
+  el.style.setProperty('--n', dates.length);
+  const head = dates.map((d, i) => {
+    const date = new Date(d + 'T00:00:00Z'), n = date.getUTCDate();
+    const month = i === 0 || n === 1 ? date.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : '';
+    return `<span>${month ? `<em>${month}</em>` : ''}${n}</span>`;
+  }).join('');
+  el.innerHTML = `<div class="pulse-row pulse-head"><span></span>${head}</div>` + state.ov.tickers.map(t => {
+    const by = Object.fromEntries(t.daily.map(r => [r.date, r]));
+    return `<div class="pulse-row${t.ticker === state.ticker ? ' active' : ''}" data-row="${t.ticker}">
+      <button class="pulse-tkr" data-ticker="${t.ticker}" type="button">${logo(t.ticker)}<b>${t.ticker}</b></button>
+      ${dates.map((d, i) => {
+        const r = by[d];
+        if (!r) return '<span class="cell none"></span>';
+        const v = Math.min(1, Math.abs(r.net) / PULSE_FULL).toFixed(2);
+        return `<button class="cell ${tone(r.net)}" type="button" style="--v:${v};--i:${i}" data-t="${t.ticker}" data-d="${d}"
+          aria-label="${t.ticker}, ${day(d)}: net ${signed(r.net)}, ${r.articles} articles"><span class="num">${signed(Math.round(r.net), 0)}</span></button>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+const pulseRow = cell => state.ov.tickers.find(t => t.ticker === cell.dataset.t).daily.find(r => r.date === cell.dataset.d);
+
+function showPulseTip(cell) {
+  const tip = $('#pulse-tip'), r = pulseRow(cell), top = r.top_positive || r.top_negative;
+  tip.innerHTML = `
+    <div class="pt-head">${logo(cell.dataset.t)}<b>${cell.dataset.t}</b><span class="muted">${day(r.date)}</span></div>
+    <div class="pt-net num ${tone(r.net)}">${signed(r.net)} <span class="muted">net</span></div>
+    <div class="pt-mix">${LABELS.map(l => `<span class="bg-${l}" style="width:${pct(r[l], r.articles)}%"></span>`).join('')}</div>
+    <div class="pt-row muted"><span>${r.articles} articles</span><span>${pct(r.positive, r.articles).toFixed(0)}% pos · ${pct(r.negative, r.articles).toFixed(0)}% neg</span></div>
+    ${top ? `<div class="pt-hl">${esc(trunc(top.title, 90))}</div><div class="pt-foot">Click to read the day's top headlines</div>` : ''}`;
+  tip.hidden = false;
+  const panel = $('.pulse-panel').getBoundingClientRect(), c = cell.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = c.left - panel.left + c.width / 2 - w / 2;
+  x = Math.max(8, Math.min(x, panel.width - w - 8));
+  const above = c.top - panel.top - h - 10;
+  const y = above > 0 ? above : c.bottom - panel.top + 10;
+  tip.style.transform = `translate(${x}px, ${y}px)`;
+}
+
+function bindPulse() {
+  const el = $('#pulse');
+  el.addEventListener('mouseover', e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (cell) showPulseTip(cell);
+  });
+  el.addEventListener('focusin', e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (cell) showPulseTip(cell);
+  });
+  el.addEventListener('mouseleave', () => { $('#pulse-tip').hidden = true; });
+  el.addEventListener('focusout', () => { $('#pulse-tip').hidden = true; });
+  el.addEventListener('click', async e => {
+    const cell = e.target.closest('.cell[data-d]');
+    if (!cell) return;
+    const r = pulseRow(cell), list = [r.top_positive, r.top_negative].filter(Boolean);
+    $('#pulse-tip').hidden = true;
+    if (state.ticker !== cell.dataset.t) selectTicker(cell.dataset.t);
+    if (list.length) openDrawer(list, r.net < 0 && r.top_negative ? list.indexOf(r.top_negative) : 0);
+    else toast(`No headlines for ${cell.dataset.t} on ${day(r.date)}.`);
+  });
 }
 
 function renderTable(el, rows) {
@@ -367,8 +455,9 @@ async function selectTicker(ticker) {
   state.ticker = ticker;
   store('ticker', ticker);
   $$('.wl-item').forEach(el => el.classList.toggle('active', el.dataset.ticker === ticker));
+  $$('.pulse-row[data-row]').forEach(el => el.classList.toggle('active', el.dataset.row === ticker));
   renderQuote();
-  document.title = `${ticker} ${signed(current().week.net)} · FinMLOps Sentiment`;
+  updateTitle();
   renderDaily();
   $('#tbl-dash').innerHTML = skRows(6);
   try {
@@ -390,6 +479,13 @@ function renderQuote() {
   $('#q-net').className = `big num ${tone(w.net)}`;
   countTo($('#q-net'), 'q-net', w.net, v => signed(v));
   $('#q-chg').innerHTML = `<span class="chip ${tone(d)}">${arrow(d)} ${signed(d)} vs prior 7D</span>`;
+  $('#q-gauge').style.setProperty('--a', `${Math.max(-1, Math.min(1, w.net / 100)) * 90}deg`);
+  $('.quote').dataset.mood = tone(w.net);
+  $('#q-mix').innerHTML = LABELS.map(l => `<span class="bg-${l}" style="width:${pct(w[l], w.articles)}%"></span>`).join('');
+  $('#q-mixl').innerHTML = LABELS.map(l => `<span><i class="bg-${l}"></i>${cap(l)} ${pct(w[l], w.articles).toFixed(0)}%</span>`).join('');
+  const mood = w.net >= 15 ? ['Bullish', 'up'] : w.net >= 5 ? ['Leaning positive', 'up'] : w.net <= -15 ? ['Bearish', 'down'] : w.net <= -5 ? ['Leaning negative', 'down'] : ['Mixed', 'flat'];
+  $('#q-mood').className = `qm-mood ${mood[1]}`;
+  $('#q-mood').textContent = mood[0];
   const int = v => Math.round(v).toLocaleString('en-US');
   const percent = v => `${v.toFixed(0)}%`;
   const stats = [
@@ -572,7 +668,18 @@ function showNoData(msg) {
 }
 
 // ---------- theme ----------
-function toggleTheme() {
+function toggleTheme(e) {
+  const btn = $('#theme-btn').getBoundingClientRect();
+  const x = e?.clientX || btn.left + btn.width / 2, y = e?.clientY || btn.top + btn.height / 2;
+  if (document.startViewTransition && !reducedMotion) {
+    document.documentElement.style.setProperty('--vt-x', `${x}px`);
+    document.documentElement.style.setProperty('--vt-y', `${y}px`);
+    document.documentElement.style.setProperty('--vt-r', `${Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y))}px`);
+    document.startViewTransition(applyTheme);
+  } else applyTheme();
+}
+
+function applyTheme() {
   const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   document.documentElement.dataset.theme = next;
   store('theme', next);
@@ -588,9 +695,13 @@ function toggleTheme() {
 async function loadNews() {
   state.newsLoaded = true;
   const { ticker, label } = state.news;
+  const q = $('#f-search').value.trim();
+  const token = (loadNews.token = {});
   $('#tbl-news').innerHTML = skRows(10);
   try {
-    state.newsRows = await api(`/api/headlines?ticker=${ticker}&label=${label}&limit=300`);
+    const rows = await api(`/api/headlines?ticker=${ticker}&label=${label}&q=${encodeURIComponent(q)}&limit=300`);
+    if (loadNews.token !== token) return; // a newer search already started
+    state.newsRows = rows;
     filterNews();
   } catch (e) {
     $('#tbl-news').innerHTML = messageRow(e.message);
@@ -598,10 +709,14 @@ async function loadNews() {
 }
 
 function filterNews() {
-  const q = $('#f-search').value.trim().toLowerCase();
-  const rows = q ? state.newsRows.filter(r => `${r.title} ${r.publisher}`.toLowerCase().includes(q)) : state.newsRows;
-  $('#news-count').textContent = `${rows.length} shown`;
-  renderTable($('#tbl-news'), rows);
+  $('#news-count').textContent = `${state.newsRows.length} shown`;
+  renderTable($('#tbl-news'), state.newsRows);
+}
+
+// the search box queries the server (all articles, not just the loaded 300), shortly after typing stops
+function searchNews() {
+  clearTimeout(searchNews.timer);
+  searchNews.timer = setTimeout(loadNews, 250);
 }
 
 // ---------- analyzer ----------
@@ -732,10 +847,11 @@ async function renderDrawer() {
 
 // ---------- guided tour ----------
 const TOUR = [
-  { sel: '.watchlist', title: 'Your watchlist', text: 'The Magnificent 7 with each one\'s <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
+  { sel: '.watchlist', title: 'Your watchlist', text: 'Seven big tech stocks, each with its <b>net sentiment</b> over the last 7 days: the % of positive headlines minus the % of negative ones, as labeled by our model. Click a ticker to open it.' },
   { sel: '.quote', title: 'The ticker at a glance', text: 'This week\'s net sentiment, how much it moved compared with the week before, and the split between positive, neutral and negative news.' },
-  { sel: '.chart-panel', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
-  { sel: '.headlines-panel', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
+  { sel: '.chart-panel', align: 'end', title: 'Sentiment vs. price', text: '<b>Blue</b> is daily net sentiment, <b>amber</b> is the closing price. <b>High</b> and <b>Low</b> mark the extremes. Hover any day to see its top headlines, and click to read them.' },
+  { sel: '.pulse-panel', align: 'center', title: 'Market pulse', text: 'Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.' },
+  { sel: '.headlines-panel', align: 'start', title: 'Why the model decided', text: 'Every headline with the model\'s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.' },
   { sel: '.tabs', title: 'More tools', text: '<b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.' },
   { sel: '#status', title: 'The live model', text: `The current champion and its macro F1. Press <kbd>${MOD_K}</kbd> anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.` },
 ];
@@ -775,7 +891,7 @@ function paletteCommands() {
       selectTicker(t.ticker);
     },
   }));
-  [['dashboard', 'Dashboard'], ['headlines', 'News feed'], ['analyzer', 'Analyzer'], ['models', 'Models']].forEach(([id, name]) => cmds.push({
+  [['home', 'Home'], ['dashboard', 'Dashboard'], ['headlines', 'News feed'], ['analyzer', 'Analyzer'], ['models', 'Models']].forEach(([id, name]) => cmds.push({
     group: 'Go to', title: name, keys: `${name} ${id}`, icon: ICON.go, run: () => showTab(id),
   }));
   const actions = [
@@ -941,35 +1057,67 @@ function showTourStep() {
   state.tour.swapTimer = setTimeout(() => {
     if (!state.tour) return;
     fillTourStep();
+    setTourSide();
     body.classList.remove('swap');
   }, reducedMotion ? 0 : 150);
   $('#tour-next').focus({ preventScroll: true });
 }
 
-// scroll only when the target isn't already comfortably on screen (the top bar never needs it)
+// the card's side for a target at rect r: to the right of tall targets, else below, else above;
+// 'inside' (covering part of the target) only when nothing else fits
+function tourSide(r) {
+  const gap = 14, m = 12, pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
+  if (r.right + gap + w < innerWidth - m && r.height > innerHeight * 0.45) return 'right';
+  if (r.bottom + gap + h <= innerHeight - m) return 'below';
+  if (r.top - gap - h >= TOPBAR + m) return 'above';
+  return 'inside';
+}
+const TOPBAR = 54;
+
+// scroll only when the target isn't comfortably on screen with room for the card (the top bar never needs it);
+// then scroll just far enough to leave room for the card above the target, so it never covers it
 function scrollToTarget() {
-  const el = tourTarget(), r = el.getBoundingClientRect();
-  if (el.closest('.topbar')) return;
-  if (r.top < 96 || r.bottom > innerHeight - 16) el.scrollIntoView({ block: 'center', behavior: reducedMotion ? 'auto' : 'smooth' });
+  const el = tourTarget(), r = el.getBoundingClientRect(), t = state.tour;
+  t.finalY = scrollY;
+  const visible = r.top >= TOPBAR + 12 && r.bottom <= innerHeight - 16;
+  if (!el.closest('.topbar') && !(visible && tourSide(r) !== 'inside')) {
+    const room = TOPBAR + 12 + $('#tour-pop').offsetHeight + 14 + 24; // card height plus a line of slack
+    const max = document.documentElement.scrollHeight - innerHeight;
+    t.finalY = Math.min(max, Math.max(0, scrollY + r.top - room));
+    scrollTo({ top: t.finalY, behavior: reducedMotion ? 'instant' : 'smooth' });
+  }
+  setTourSide();
+}
+
+// pick the card's side once per step, from where the target will be once scrolling stops; deciding it
+// every frame made the card detour (to a corner) while the page was still scrolling
+function setTourSide() {
+  const t = state.tour, now = tourTarget().getBoundingClientRect(), shift = scrollY - t.finalY;
+  t.side = tourSide({ top: now.top + shift, bottom: now.bottom + shift, right: now.right, height: now.height });
 }
 
 // where the spotlight and card should be right now (recomputed every frame, so it follows scrolling)
 function tourGoal() {
   const r = tourTarget().getBoundingClientRect(), pad = 6, gap = 14, m = 12;
   const pop = $('#tour-pop'), w = pop.offsetWidth, h = pop.offsetHeight;
-  let top = r.bottom + gap, left = Math.min(Math.max(m, r.left), innerWidth - w - m);
-  if (top + h > innerHeight - m) top = r.top - gap - h; // above
-  if (top < m) { // neither fits: tuck it inside the bottom-right of the highlighted area
+  const t = state.tour, side = t.side || 'below', align = t.steps[t.i].align || 'start';
+  // the point on the target the card points at: its left end, middle or right end (40px in from the edge)
+  const anchor = align === 'center' ? r.left + r.width / 2 : align === 'end' ? r.right - 40 : r.left + 40;
+  const ideal = align === 'center' ? anchor - w / 2 : align === 'end' ? r.right - w : r.left;
+  let top = r.bottom + gap, left = Math.min(Math.max(m, ideal), innerWidth - w - m);
+  if (side === 'above') top = r.top - gap - h;
+  if (side === 'inside') {
     top = Math.min(r.bottom - h - 16, innerHeight - h - m);
     left = Math.min(r.right - w - 16, innerWidth - w - m);
   }
-  if (r.right + gap + w < innerWidth - m && r.height > innerHeight * 0.45) { // tall targets: to the right
+  if (side === 'right') {
     left = r.right + gap;
     top = Math.min(Math.max(m, r.top), innerHeight - h - m);
   }
   return {
     spot: { x: r.left - pad, y: r.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 },
-    pop: { x: Math.max(m, left), y: Math.max(m, top) },
+    pop: { x: Math.max(m, left), y: Math.min(Math.max(m, top), innerHeight - h - m) }, // always fully on screen
+    side, anchor, targetMidY: r.top + Math.min(r.height, innerHeight) / 2,
   };
 }
 
@@ -987,7 +1135,16 @@ function tourFrame(now) {
   spot.style.transform = `translate3d(${t.spot.x}px, ${t.spot.y}px, 0)`;
   spot.style.width = `${t.spot.w}px`;
   spot.style.height = `${t.spot.h}px`;
-  $('#tour-pop').style.transform = `translate3d(${t.pop.x}px, ${t.pop.y}px, 0)`;
+  const pop = $('#tour-pop'), caret = $('#tour-caret');
+  pop.style.transform = `translate3d(${t.pop.x}px, ${t.pop.y}px, 0)`;
+  pop.dataset.side = goal.side;
+  if (goal.side === 'right') {
+    caret.style.left = '0px';
+    caret.style.top = `${Math.min(Math.max(18, goal.targetMidY - t.pop.y), pop.offsetHeight - 18)}px`;
+  } else {
+    caret.style.top = goal.side === 'above' ? '100%' : '0px';
+    caret.style.left = `${Math.min(Math.max(22, goal.anchor - t.pop.x), pop.offsetWidth - 22)}px`;
+  }
   t.raf = requestAnimationFrame(tourFrame);
 }
 
@@ -1029,6 +1186,7 @@ async function loadModels() {
     $('#tbl-models').innerHTML = messageRow('No registered models yet. Run: uv run python -m scripts.train baseline');
     return;
   }
+  renderKpis(champ);
   $('#tbl-models').innerHTML = `
     <thead><tr><th>Version</th><th>Run</th><th>Registered</th><th class="r">Macro F1</th><th class="r">Accuracy</th><th>Status</th></tr></thead>
     <tbody>${state.models.map(m => `
@@ -1041,6 +1199,21 @@ async function loadModels() {
         <td>${m.champion ? '<span class="badge champ">Champion</span>' : '<span class="badge">Candidate</span>'}</td>
       </tr>`).join('')}
     </tbody>`;
+}
+
+function renderKpis(champ) {
+  const MIN_F1 = 0.6;
+  const f1 = champ?.f1_macro, acc = champ?.accuracy;
+  const bar = v => `<div class="kpi-bar"><i style="width:${Math.min(100, (v ?? 0) * 100)}%"></i><b style="left:${MIN_F1 * 100}%" title="Validation bar: 0.60"></b></div>`;
+  const tiles = [
+    ['Champion', champ ? `v${champ.version}` : '—', champ ? esc(champ.run) : 'none registered', ''],
+    ['Macro F1', f3(f1), f1 == null ? '' : f1 >= MIN_F1 ? 'passes the 0.60 bar' : 'below the 0.60 bar', bar(f1)],
+    ['Accuracy', f3(acc), 'on the evaluation set', bar(acc).replace(/<b[^>]*><\/b>/, '')],
+    ['Versions', String(state.models.length), 'in the registry', ''],
+  ];
+  $('#model-kpis').innerHTML = tiles.map(([label, v, h, extra]) => `
+    <div class="panel kpi"><span class="label">${label}</span><span class="kpi-v num">${v}</span><span class="h">${h}</span>${extra}</div>`).join('');
+  reveal($('#model-kpis'));
 }
 
 function renderModelChart() {
@@ -1069,17 +1242,56 @@ function renderModelChart() {
 }
 
 // ---------- navigation ----------
+// the browser tab names the page you're on (and, on the dashboard, the stock and its sentiment)
+const PAGE_TITLES = { home: 'FinMLOps · Market Sentiment', headlines: 'News · FinMLOps', analyzer: 'Analyzer · FinMLOps', models: 'Models · FinMLOps' };
+function updateTitle() {
+  const page = $('.view.active')?.id.slice(5) || 'home';
+  document.title = page === 'dashboard' && state.ov
+    ? `${state.ticker} ${signed(current().week.net)} · FinMLOps`
+    : PAGE_TITLES[page] || PAGE_TITLES.home;
+}
+
 function showTab(name) {
-  if (!TABS.includes(name)) name = 'dashboard';
+  if (!TABS.includes(name)) name = 'home';
+  document.documentElement.dataset.page = name;
+  if (name !== $('.view.active')?.id.slice(5)) scrollTo({ top: 0, behavior: 'instant' });
   history.replaceState(null, '', `#${name}`);
   $$('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   moveInk();
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  updateTitle();
   if (name === 'headlines' && !state.newsLoaded) loadNews();
   if (name === 'models' && state.models.length) renderModelChart();
+  // first visit to the dashboard: offer the tour once
+  if (name === 'dashboard' && state.ov && !state.tour && !store('toured')) {
+    setTimeout(() => { if (!state.tour && !store('toured') && $('#view-dashboard').classList.contains('active')) startTour(); }, 500);
+  }
+}
+
+// ---------- home ----------
+function renderHome() {
+  const tickers = state.ov.tickers;
+  // last close and its change vs the last close at least a week earlier
+  const weekMove = t => {
+    const closes = t.daily.filter(d => d.close != null);
+    if (closes.length < 2) return null;
+    const last = closes[closes.length - 1];
+    const cut = new Date(new Date(last.date) - 7 * 864e5).toISOString().slice(0, 10);
+    const ref = [...closes].reverse().find(d => d.date <= cut) || closes[0];
+    return { close: last.close, change: (last.close / ref.close - 1) * 100 };
+  };
+  // the chips (logo and ticker) are static in the HTML; only each one's price and change are filled in here
+  tickers.forEach(t => {
+    const el = $(`#hero-strip [data-ticker="${t.ticker}"] .hs-quote`), m = weekMove(t);
+    if (!el) return;
+    el.innerHTML = m ? `<span class="hs-price num">$${m.close.toFixed(2)}</span><span class="hs-chg num ${tone(m.change)}">${signed(m.change, 1)}%</span>` : '<span class="hs-price muted">no price</span>';
+    reveal(el);
+  });
 }
 
 function bindUI() {
+  // selected text, links and logos can still be copied, but not dragged around the page
+  document.addEventListener('dragstart', e => e.preventDefault());
   $$('.tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
   addEventListener('resize', moveInk);
   document.fonts?.ready.then(moveInk);
@@ -1105,7 +1317,7 @@ function bindUI() {
   $('#f-ticker').innerHTML = ['<button data-t="" class="active">All</button>', ...TICKERS.map(t => `<button data-t="${t}">${t}</button>`)].join('');
   seg($('#f-ticker'), d => { state.news.ticker = d.t; loadNews(); });
   seg($('#f-label'), d => { state.news.label = d.label; loadNews(); });
-  $('#f-search').addEventListener('input', filterNews);
+  $('#f-search').addEventListener('input', searchNews);
 
   $('#examples').innerHTML = EXAMPLES.map(t => `<button class="example">${esc(t)}</button>`).join('');
   $('#examples').addEventListener('click', e => {
@@ -1114,6 +1326,13 @@ function bindUI() {
     $('#an-text').value = b.textContent;
     analyze(b.textContent);
   });
+  $('#stale-x').addEventListener('click', () => {
+    $('#stale').hidden = true;
+    try { sessionStorage.setItem('finmlops.stale', state.ov?.as_of || ''); } catch {}
+  });
+  const count = () => { $('#an-count').textContent = `${$('#an-text').value.length} / 500`; };
+  $('#an-text').addEventListener('input', count);
+  $('#examples').addEventListener('click', () => setTimeout(count));
   $('#an-form').addEventListener('submit', e => { e.preventDefault(); analyze($('#an-text').value); });
   $('#an-text').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); analyze($('#an-text').value); }
@@ -1169,6 +1388,14 @@ function bindUI() {
   });
 
   $('#dash-all').addEventListener('click', () => showTab('headlines'));
+  document.addEventListener('click', e => {
+    const go = e.target.closest('[data-go]');
+    if (go) showTab(go.dataset.go);
+  });
+  $('#hero-how').addEventListener('click', () => $('#how').scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' }));
+  $('#brand').addEventListener('click', () => showTab('home'));
+  $('#brand').addEventListener('keydown', e => { if (e.key === 'Enter') showTab('home'); });
+  bindPulse();
 
   // guided tour
   $('#tour-btn').addEventListener('click', startTour);
@@ -1207,6 +1434,7 @@ function bindUI() {
 async function init() {
   setupCharts();
   bindUI();
+  showTab(location.hash.slice(1)); // the right tab is highlighted right away, not after the data arrives
   showSkeletons();
   const models = loadModels();
   try {
@@ -1219,15 +1447,15 @@ async function init() {
     renderAsOf();
     renderStale();
     renderWatchlist();
+    renderPulse();
+    renderHome();
     reveal($('#watchlist'));
     reveal($('.quote'));
     await selectTicker(state.ticker);
   }
   await models;
   showTab(location.hash.slice(1));
-  // first visit: show the tour once the splash is gone
   await splashGone;
-  if (state.ov && !store('toured') && location.hash.slice(1) === 'dashboard') setTimeout(startTour, 400);
 }
 
 init();
