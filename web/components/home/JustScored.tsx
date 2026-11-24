@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useApp } from "@/components/AppProvider";
+import { groupRows } from "@/components/HeadlineTable";
 import { Logo } from "@/components/Logo";
 import { useApi } from "@/lib/api";
 import { cap, when } from "@/lib/format";
@@ -12,13 +13,7 @@ const CARDS = 4;
 export function JustScored() {
   const { openDrawer } = useApp();
   const { data, error } = useApi<Article[]>("/api/headlines?limit=40");
-  // one card per article: an article about two companies has a row, and a label, for each
-  const groups: Article[][] = [];
-  for (const a of data ?? []) {
-    const g = groups.find(g => g[0].id === a.id);
-    if (g) g.push(a);
-    else if (groups.length < CARDS) groups.push([a]);
-  }
+  const groups = groupRows(data ?? []).slice(0, CARDS); // one card per article, with a label for each company in it
   const rows = groups.flat();
 
   return (

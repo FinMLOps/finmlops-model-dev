@@ -1,15 +1,6 @@
-import { Stale } from "@/components/Stale";
-import { Watchlist } from "@/components/Watchlist";
+import { ToolsShell } from "@/components/ToolsShell";
 
-// Dashboard, News, Analyzer and Models share the watchlist sidebar
+// Dashboard and News get the watchlist sidebar; Analyzer and Models are centered
 export default function ToolsLayout({ children }: LayoutProps<"/">) {
-  return (
-    <>
-      <Stale />
-      <div className="layout">
-        <Watchlist />
-        <main>{children}</main>
-      </div>
-    </>
-  );
+  return <ToolsShell>{children}</ToolsShell>;
 }

@@ -3,6 +3,7 @@ import type { ChartConfiguration } from "chart.js";
 import { useEffect, useMemo } from "react";
 import { ChartCanvas } from "@/components/ChartCanvas";
 import { SkeletonRows } from "@/components/HeadlineTable";
+import { PageHead } from "@/components/PageHead";
 import { useApi } from "@/lib/api";
 import { alpha, useChartColors } from "@/lib/chart";
 import { f3, TICKERS, when } from "@/lib/format";
@@ -57,6 +58,7 @@ export default function Models() {
 
   return (
     <div id="view-models">
+      <PageHead label="Models" title="Only better models ship." text="Every registered version, how the champion scores, and the rule a challenger has to pass to replace it." />
       <div className="kpis">
         {tiles.map(([label, v, h, extra]) => (
           <div className="panel kpi" key={label}><span className="label">{label}</span><span className="kpi-v num">{models ? v : <span className="sk xl" style={{ width: 70 }} />}</span><span className="h">{h}</span>{extra}</div>
@@ -92,12 +94,12 @@ export default function Models() {
           </div>
           <div className="panel">
             <div className="panel-head">Promotion rule</div>
-            <ul className="rules">
+            <ol className="steps rule-steps">
               <li><b>Validate.</b> Macro F1 of at least 0.60 on the gold set, or the run fails.</li>
               <li><b>A real gain.</b> The macro F1 gain stays above zero across a 95% bootstrap interval, so luck can&apos;t promote a model.</li>
               <li><b>No ticker worse off.</b> No ticker more than 0.02 less accurate than under the champion.</li>
               <li><b>Ship or roll back.</b> A winner is copied to cloud storage, then becomes the champion; otherwise the champion stays live.</li>
-            </ul>
+            </ol>
           </div>
         </div>
       </div>
