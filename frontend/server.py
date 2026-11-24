@@ -1,8 +1,9 @@
-"""Web dashboard: a small FastAPI backend for the frontend in frontend/static.
+"""The API behind the website in web/: the scored news, the headline analyzer (runs the champion) and the registry.
 
 uv run python -m frontend.server score    # label every article in news.parquet with the champion (cached)
 uv run python -m frontend.server prices   # daily closing prices from Yahoo Finance (cached, optional)
-uv run python -m frontend.server          # then open http://localhost:8000 (HOST / PORT in .env change it)
+uv run python -m frontend.server          # the API on http://localhost:8000 (HOST / PORT in .env change it);
+                                          # the site itself runs from web/ (see frontend/UI_SETUP.md)
 
 The server notices on its own when a new champion is promoted or the cached files are rewritten, so it never
 needs a restart after `score`, `prices` or a promotion.
@@ -19,7 +20,6 @@ import uvicorn
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.staticfiles import StaticFiles
 from mlflow import MlflowClient
 from pydantic import BaseModel
 
@@ -28,7 +28,6 @@ from scripts.config import ROOT, TICKER_NAMES
 from scripts.data import load_news, model_input
 from scripts.evaluate import predict_probs
 
-STATIC = Path(__file__).parent / "static"
 PRED_PATH = ROOT / "outputs" / "predictions.parquet"
 PRICE_PATH = ROOT / "outputs" / "prices.parquet"
 LABELS = ["positive", "neutral", "negative"]
@@ -41,14 +40,6 @@ app = FastAPI(title="FinMLOps sentiment")
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # the overview JSON shrinks about 5x
 
 
-@app.middleware("http")
-async def revalidate(request, call_next):
-    """browsers recheck the page, scripts and images on every load (a cheap 304 when unchanged), so an edited
-    logo or stylesheet shows up on a normal refresh instead of hours later"""
-    response = await call_next(request)
-    if not request.url.path.startswith("/api/"):
-        response.headers.setdefault("Cache-Control", "no-cache")
-    return response
 _model = {"version": None, "parts": None}
 _model_lock = threading.Lock()  # requests run in parallel threads; only one of them may (re)load the model
 
@@ -259,7 +250,11 @@ def models():
     return sorted(out, key=lambda r: -r["version"])
 
 
-app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+@app.get("/")
+def root():
+    """this is only the API; anyone who opens it in a browser is pointed at the site"""
+    return {"service": "FinMLOps API", "site": "the website runs from web/: cd web && npm run dev, then "
+            "http://localhost:3000 (see frontend/UI_SETUP.md)", "health": "/api/health", "docs": "/docs"}
 
 
 if __name__ == "__main__":

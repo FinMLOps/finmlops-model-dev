@@ -9,16 +9,15 @@ This is the model stage of our FinMLOps project. It takes the cleaned financial 
 
 ## Dashboard
 
-The dashboard shows the champion's labels for every article: net sentiment per ticker (% positive − % negative) next to the stock price, the latest headlines, a headline analyzer and the registered models. The data it reads is in the repo, so it runs right after cloning; see [`frontend/UI_SETUP.md`](frontend/UI_SETUP.md).
+The dashboard shows the champion's labels for every article: net sentiment per ticker (% positive − % negative) next to the stock price, the latest headlines, a headline analyzer and the registered models. It's two parts: the API in `frontend/server.py` (runs the model, serves the data) and the website in [`web/`](web/README.md) (Next.js). The data it reads is in the repo, so it runs right after cloning; see [`frontend/UI_SETUP.md`](frontend/UI_SETUP.md).
 
 ```bash
 uv sync --extra cpu
-uv run python -m frontend.server             # http://localhost:8000
+uv run python -m frontend.server             # terminal 1: the API on http://localhost:8000
+cd web && npm install && npm run dev         # terminal 2: the site on http://localhost:3000
 ```
 
-A Next.js version of the same dashboard, built for deploying on Google Cloud, is in [`web/`](web/README.md).
-
-![The FinMLOps dashboard: NVDA's daily net sentiment against its closing price, the Magnificent 7 watchlist and the latest headlines](frontend/dashboard.png)
+**Deployment** (Google Cloud Run, CI/CD, monitoring and retraining): see [DEPLOY.md](DEPLOY.md).
 
 ## Team
 
@@ -276,10 +275,8 @@ finmlops-model-dev/
 │   ├── analysis.py           # charts and sensitivity analysis
 │   └── pipeline.py           # the whole flow in one command, with email alerts
 ├── frontend/
-│   ├── server.py             # the dashboard (FastAPI); `score` labels every article, `prices` gets daily closes
-│   ├── static/               # the dashboard's HTML, CSS and JavaScript
-│   ├── UI_SETUP.md           # how to run it
-│   └── dashboard.png         # screenshot
+│   ├── server.py             # the API behind web/ (FastAPI); `score` labels every article, `prices` gets daily closes
+│   └── UI_SETUP.md           # how to run the API and the site
 ├── outputs/
 │   ├── predictions.parquet   # every article labeled by the champion (the dashboard's data, in git)
 │   └── prices.parquet        # daily closing prices (in git)
