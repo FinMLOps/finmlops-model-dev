@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { useApp } from "@/components/AppProvider";
 import { HeadlineTable } from "@/components/HeadlineTable";
+import { PageHead } from "@/components/PageHead";
 import { DailyChart } from "@/components/dashboard/DailyChart";
 import { Pulse } from "@/components/dashboard/Pulse";
 import { QuoteCard } from "@/components/dashboard/QuoteCard";
@@ -52,6 +53,7 @@ export default function Dashboard() {
 
   return (
     <>
+      <PageHead label="Dashboard" title="Sentiment, next to the price." text="Each stock's daily net sentiment against its closing price, a two-week pulse of all seven, and the headlines behind it." />
       <QuoteCard />
       <div className="grid"><DailyChart /></div>
       <Pulse />

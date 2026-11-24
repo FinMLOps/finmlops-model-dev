@@ -11,7 +11,7 @@ const STEPS: Step[] = [
   { sel: ".pulse-panel", align: "center", title: "Market pulse", text: <>Two weeks of sentiment for all seven tickers at once. <b>Green</b> days were mostly positive news, <b>red</b> mostly negative. Hover a day for its numbers, click it to read the top headlines.</> },
   { sel: ".headlines-panel", align: "start", title: "Why the model decided", text: <>Every headline with the model&apos;s label and confidence. Click one to see <b>which words</b> pushed it toward positive or negative.</> },
   { sel: ".tabs", title: "More tools", text: <><b>Analyzer</b> scores any headline you paste. <b>Models</b> shows the champion, the candidates, and the rule a new model must pass to be promoted.</> },
-  { sel: ".status", title: "The live model", text: <>The current champion and its macro F1. Press <kbd>Ctrl K</kbd> (<kbd>⌘K</kbd> on a Mac) anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour.</> },
+  { sel: ".nav-search", title: "Search anything", text: <>Press <kbd>Ctrl K</kbd> (<kbd>⌘K</kbd> on a Mac) anytime to jump to a ticker, find a headline or analyze one, and <b>?</b> to replay this tour. The current champion model and its scores are on the <b>Models</b> page.</> },
 ];
 const TOPBAR = 54, GAP = 14, M = 12, PAD = 6;
 type Side = "right" | "below" | "above" | "inside";
