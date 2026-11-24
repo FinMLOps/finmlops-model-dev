@@ -70,6 +70,12 @@ STUDY = "finbert-lora"
 MLFLOW_URI = f"sqlite:///{ROOT / 'mlflow.db'}"  # override with MLFLOW_TRACKING_URI (e.g. a shared server)
 STORAGE = f"sqlite:///{ROOT / 'optuna.db'}"  # Optuna study, read again by analysis.py
 
+# monitoring the deployed champion (scripts/monitor.py)
+MONITOR_DAYS = 7  # how much of the newest news (after the benchmark window) is checked
+MIN_MONITOR_ROWS = 50  # fewer new rows than this are too noisy to judge
+DRIFT_PSI = 0.2  # population stability index above this counts as a significant shift (the usual rule of thumb)
+DECAY_DROP = 0.10  # retrain when macro F1 on new news is this much below its macro F1 on the held-out benchmark window
+
 # promotion
 MIN_F1 = 0.6  # a challenger below this macro F1 fails validation
 TOLERANCE = 0.02  # a challenger may be this much worse on a ticker (small slices are noisy)

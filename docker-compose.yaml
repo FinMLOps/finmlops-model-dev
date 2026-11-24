@@ -1,0 +1,22 @@
+# Both services locally, built from the same Dockerfiles Cloud Run runs. Bundle the champion first:
+#   MODEL_BUCKET=<bucket> deploy/bundle.sh
+#   docker compose up --build          # site: http://localhost:3000   API: http://localhost:8000/api/health
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports: ["8000:8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 15s
+      start_period: 60s
+
+  web:
+    build: web
+    ports: ["3000:8080"]
+    environment:
+      API_URL: http://api:8080
+    depends_on:
+      api:
+        condition: service_healthy

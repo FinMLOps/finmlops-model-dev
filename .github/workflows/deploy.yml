@@ -1,0 +1,102 @@
+name: deploy
+
+# CD to Google Cloud Run (see DEPLOY.md). Runs deploy/deploy.sh: pulls the champion from the model registry in GCS,
+# scores the news with it, builds and deploys the API and the web app, smoke-tests the live services and emails the
+# result. Runs when the train workflow promotes a new champion, when the app's code changes on main, or by hand.
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["web/**", "frontend/**", "Dockerfile.api", "Dockerfile.api.dockerignore", "deploy/**",
+            ".github/workflows/deploy.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90  # scoring every article on CPU is the slow part
+    env:
+      # Repo settings -> Secrets and variables -> Actions (deploy/setup.sh prints these):
+      #   GCP_SA_KEY   (secret) service-account JSON: read the DVC bucket and MODEL_BUCKET, push images, deploy
+      #   GCP_PROJECT  (variable) the project to deploy to
+      #   GCP_REGION   (variable, optional) default us-east1
+      #   MODEL_BUCKET (variable) the bucket the champion and registry.json are pushed to
+      HAS_GCP: ${{ secrets.GCP_SA_KEY != '' && vars.GCP_PROJECT != '' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      GCP_REGION: ${{ vars.GCP_REGION || 'us-east1' }}
+      MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
+      TAG: ${{ github.sha }}
+
+    steps:
+      - name: Skip until Google Cloud access is set up
+        if: env.HAS_GCP != 'true'
+        run: echo "::notice::GCP_SA_KEY or GCP_PROJECT is not set, so there is nowhere to deploy to; see DEPLOY.md."
+
+      - name: Checkout repository
+        if: env.HAS_GCP == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        if: env.HAS_GCP == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (CPU PyTorch)
+        if: env.HAS_GCP == 'true'
+        run: uv python install && uv sync --frozen --no-dev --extra cpu
+
+      - name: Authenticate to Google Cloud
+        if: env.HAS_GCP == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        if: env.HAS_GCP == 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy (bundle the champion, build, deploy, smoke test)
+        id: deploy
+        if: env.HAS_GCP == 'true'
+        run: deploy/deploy.sh
+
+      - name: Summary
+        if: env.HAS_GCP == 'true'
+        run: |
+          {
+            echo "### Deploy ${{ job.status }}"
+            echo "- Site: ${{ steps.deploy.outputs.web_url }}"
+            echo "- API: ${{ steps.deploy.outputs.api_url }}"
+            echo "- Champion: v$(jq -r .champion bundle/registry.json 2>/dev/null || echo '?')"
+            echo "- Commit: ${{ github.sha }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Email the result
+        if: always() && env.HAS_GCP == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_APP_PASSWORD }}
+          subject: "Deploy ${{ job.status }}: ${{ github.repository }} (${{ github.ref_name }})"
+          to: ${{ secrets.RECIPIENTS }}
+          from: "GitHub Actions <${{ secrets.GMAIL_USERNAME }}>"
+          body: |
+            The deployment to Cloud Run finished: ${{ job.status }}.
+
+            - Site: ${{ steps.deploy.outputs.web_url || 'not deployed' }}
+            - API: ${{ steps.deploy.outputs.api_url || 'not deployed' }}
+            - Commit: ${{ github.sha }}
+            - Triggered by: ${{ github.actor }} (${{ github.event_name }})
+
+            Logs:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

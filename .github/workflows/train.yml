@@ -4,6 +4,8 @@ name: train
 # Actions tab (optionally with the Optuna search). Tests run first; the pipeline then trains a challenger, validates
 # it (macro F1 >= 0.60), runs the slice (bias) report, compares it with the champion, and promotes it (after copying
 # it to GCS) only if it is confidently better; otherwise the champion stays (rollback). Failures are emailed.
+# A promotion then redeploys the app (deploy.yml). The monitor workflow starts this one with update_data when it sees
+# drift or decay, so the challenger trains on the newest news instead of the pinned snapshot.
 on:
   push:
     branches: [main]
@@ -12,6 +14,10 @@ on:
     inputs:
       tune:
         description: "Run the Optuna search before training"
+        type: boolean
+        default: false
+      update_data:
+        description: "Train on the newest news from the data pipeline (dvc update) instead of the pinned snapshot"
         type: boolean
         default: false
 
@@ -31,6 +37,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 300  # CPU only
+    outputs:
+      status: ${{ steps.pipeline.outputs.status }}  # "promoted" starts the deploy job below
     env:
       # Repo settings -> Secrets and variables -> Actions:
       #   GCP_SA_KEY          (secret) service-account JSON: read access to the DVC bucket, write access to MODEL_BUCKET
@@ -68,11 +76,12 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Get the data snapshot pinned in data/news.parquet.dvc
+      - name: Get the data (the pinned snapshot, or the newest with update_data)
         if: env.HAS_GCP == 'true'
-        run: uv run dvc pull data/news.parquet.dvc
+        run: uv run dvc ${{ inputs.update_data && 'update' || 'pull' }} data/news.parquet.dvc
 
       - name: Run the model pipeline (train, validate, slice report, compare, promote or roll back)
+        id: pipeline
         if: env.HAS_GCP == 'true'
         run: uv run python -m scripts.pipeline ${{ inputs.tune && '--tune' || '' }}
 
@@ -106,3 +115,10 @@ jobs:
 
             Logs, charts and reports:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # a new champion was promoted (and pushed to the model registry in GCS): redeploy the app with it
+  deploy:
+    needs: train
+    if: needs.train.outputs.status == 'promoted'
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit

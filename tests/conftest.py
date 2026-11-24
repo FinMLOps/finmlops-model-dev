@@ -5,7 +5,8 @@ import pytest
 
 ROW = {"id": "a", "source": "marketaux", "publisher": "p", "ticker": "AAPL", "title": "t", "summary": "s",
        "text": "t s", "published": "2026-11-01", "url": "u", "sentiment_score": 0.5}
-SETTINGS = ["MLFLOW_TRACKING_URI", "MODEL_BUCKET", "GMAIL_USERNAME", "GMAIL_APP_PASSWORD", "ALERT_RECIPIENTS"]
+SETTINGS = ["MLFLOW_TRACKING_URI", "MODEL_BUCKET", "GMAIL_USERNAME", "GMAIL_APP_PASSWORD", "ALERT_RECIPIENTS",
+            "GITHUB_OUTPUT"]  # set in GitHub Actions; tests must not write to the real workflow outputs
 
 
 @pytest.fixture(autouse=True)

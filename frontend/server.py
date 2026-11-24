@@ -7,11 +7,16 @@ uv run python -m frontend.server          # the API on http://localhost:8000 (HO
 
 The server notices on its own when a new champion is promoted or the cached files are rewritten, so it never
 needs a restart after `score`, `prices` or a promotion.
+
+Deployed (Dockerfile.api), MODEL_DIR and REGISTRY_FILE point at the champion's files and registry.json baked into the
+image, so no MLflow registry is needed; see DEPLOY.md.
 """
 
+import json
 import os
 import sys
 import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -20,7 +25,6 @@ import uvicorn
 import yfinance as yf
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from mlflow import MlflowClient
 from pydantic import BaseModel
 
 from scripts import hardware, registry
@@ -35,26 +39,52 @@ NAMES = {"AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "GOOGL": "Alpha
          "META": "Meta Platforms", "AMZN": "Amazon", "TSLA": "Tesla"}
 
 MAX_CHARS = 500  # longest headline the Analyzer takes; each word costs one extra model pass
+MODEL_DIR = os.getenv("MODEL_DIR")  # deployed: the champion's files, loaded without the MLflow registry
+REGISTRY_FILE = Path(os.getenv("REGISTRY_FILE") or ROOT / "bundle" / "registry.json")  # deployed: champion + scores
 
 app = FastAPI(title="FinMLOps sentiment")
 app.add_middleware(GZipMiddleware, minimum_size=1000)  # the overview JSON shrinks about 5x
+
+
+def log_json(**fields):
+    """one JSON line on stdout: Cloud Logging reads severity and httpRequest from it, and it stays readable locally"""
+    print(json.dumps(fields, default=str), flush=True)
+
+
+@app.middleware("http")
+async def access_log(request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        log_json(severity="ERROR" if response.status_code >= 500 else "INFO",
+                 message=f"{request.method} {request.url.path} {response.status_code}",
+                 httpRequest={"requestMethod": request.method, "requestUrl": str(request.url),
+                              "status": response.status_code, "latency": f"{time.perf_counter() - start:.3f}s"})
+    return response
 
 
 _model = {"version": None, "parts": None}
 _model_lock = threading.Lock()  # requests run in parallel threads; only one of them may (re)load the model
 
 
+def champion_version():
+    """the champion's version: from the baked registry.json when deployed, else from the MLflow registry"""
+    if MODEL_DIR:
+        return json.loads(REGISTRY_FILE.read_text())["champion"]
+    registry.setup()
+    return registry.champion_version()
+
+
 def champion():
     """the champion (model, tokenizer), reloaded automatically when a new version gets the champion alias"""
-    registry.setup()
-    version = registry.champion_version()
+    version = champion_version()
     if version is None:
         raise RuntimeError("no champion registered yet")
     with _model_lock:
         if _model["version"] != version:
             _model.update(version=None, parts=None)  # let the old model go before loading the new one
             hardware.free_memory()
-            _model.update(version=version, parts=registry.load(version))
+            _model.update(version=version, parts=registry.load_dir(MODEL_DIR) if MODEL_DIR else registry.load(version))
         return _model["parts"]
 
 
@@ -73,7 +103,7 @@ def score_news():
     probs = predict_probs(model, tokenizer, model_input(df))  # per ticker: "NVDA (NVIDIA): ..."
     df["pred"] = [model.config.id2label[i] for i in probs.argmax(dim=-1).tolist()]
     df["confidence"] = probs.max(dim=-1).values.tolist()
-    df["version"] = registry.champion_version()
+    df["version"] = champion_version()
     save_parquet(df, PRED_PATH)
     print(f"scored {len(df)} articles -> {PRED_PATH}")
 
@@ -217,8 +247,12 @@ def analyze(body: Headline):
     probs = predict_probs(model, tokenizer, texts)
     labels = [model.config.id2label[i].lower() for i in range(probs.shape[1])]
     score = probs[:, labels.index("positive")] - probs[:, labels.index("negative")]
+    label = labels[int(probs[0].argmax())]
+    # for monitoring: the label mix of what visitors analyze (the headline itself isn't logged)
+    log_json(severity="INFO", message="prediction", event="prediction", version=_model["version"], label=label,
+             confidence=round(float(probs[0].max()), 4), words=len(words))
     return {
-        "label": labels[int(probs[0].argmax())],
+        "label": label,
         "probs": dict(zip(labels, probs[0].tolist())),
         "words": [{"word": w, "impact": round(float(score[0] - score[i + 1]), 4)} for i, w in enumerate(words)],
     }
@@ -226,28 +260,25 @@ def analyze(body: Headline):
 
 @app.get("/api/models")
 def models():
-    """every registered version with the metrics its run logged (test_* for LoRA runs, plain for the baseline)"""
+    """every registered version with its scores: the baked registry.json when deployed, else the MLflow registry"""
     try:
+        if MODEL_DIR:
+            return json.loads(REGISTRY_FILE.read_text())["versions"]
         registry.setup()
-        client = MlflowClient()
-        champ = registry.champion_version()
-        out = []
-        for v in client.search_model_versions(f"name='{registry.NAME}'"):
-            run = client.get_run(v.run_id)
-            m = run.data.metrics
-            p = "test_" if "test_f1_macro" in m else ""
-            out.append({
-                "version": int(v.version),
-                "run": run.info.run_name,
-                "created": v.creation_timestamp,
-                "champion": v.version == champ,
-                "f1_macro": m.get(f"{p}f1_macro"),
-                "accuracy": m.get(f"{p}accuracy"),
-                "per_ticker": {t: m.get(f"{p}accuracy_{t}") for t in NAMES},
-            })
+        return registry.versions()
     except Exception as exc:
         raise HTTPException(503, f"Model registry unavailable ({exc})")
-    return sorted(out, key=lambda r: -r["version"])
+
+
+@app.get("/api/health")
+def health():
+    """for the deploy smoke test and the uptime check: the champion served and how fresh the scored news is"""
+    try:
+        version = champion_version()
+    except Exception as exc:
+        raise HTTPException(503, f"No champion model ({exc})")
+    as_of = news()["published"].max().isoformat() if PRED_PATH.exists() else None
+    return {"status": "ok", "champion": version, "model_loaded": _model["version"] == version, "news_as_of": as_of}
 
 
 @app.get("/")
@@ -264,6 +295,9 @@ if __name__ == "__main__":
     elif args == ["prices"]:
         fetch_prices()
     elif not args:
-        uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8000")))
+        if MODEL_DIR:  # load the model while the container starts, so the first Analyzer request isn't the slow one
+            threading.Thread(target=champion, daemon=True).start()
+        # access_log=False: access_log() above writes one structured line per API request instead
+        uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=int(os.getenv("PORT", "8000")), access_log=False)
     else:
         sys.exit("usage: python -m frontend.server [score | prices]")

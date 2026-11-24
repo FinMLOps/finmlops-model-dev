@@ -108,6 +108,8 @@ def run(do_tune=False):
         where = registry.push_to_gcs(version) if os.getenv("MODEL_BUCKET") else "not pushed (MODEL_BUCKET not set)"
         registry.promote(version)
         message += f"\npushed to {where}"
+        if os.getenv("MODEL_BUCKET"):  # registry.json tells the deployment (and its Models page) about the new champion
+            message += f"\nregistry published to {registry.publish()}"
     return status, message
 
 
@@ -119,6 +121,9 @@ def main():
         notify("pipeline crashed", traceback.format_exc())
         raise
     print(status, message, sep="\n")
+    if os.getenv("GITHUB_OUTPUT"):  # lets the train workflow start a deploy only when a new champion was promoted
+        with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+            f.write(f"status={status}\n")
     notify(status, message)
     if status == "failed validation":
         sys.exit(1)

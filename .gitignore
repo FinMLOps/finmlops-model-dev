@@ -15,3 +15,6 @@ mlflow.db
 optuna.db
 data/gold_todo.csv
 data/*.tmp
+
+# the champion pulled from the model registry for the API image (deploy/bundle.sh)
+bundle/

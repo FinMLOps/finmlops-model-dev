@@ -1,0 +1,26 @@
+# The API (frontend/server.py) for Cloud Run, with the champion model and the news it scored baked in, so the running
+# service needs no MLflow registry, no bucket access and no internet. Build it after deploy/bundle.sh, which pulls the
+# champion from the model registry in GCS into bundle/ and scores the news into outputs/ (deploy/deploy.sh does both):
+#   docker build -f Dockerfile.api -t finmlops-api .
+#   docker run -p 8000:8080 finmlops-api        # then http://localhost:8000/api/health
+# The training pipeline's image is the other Dockerfile; this one has its own ignore file (Dockerfile.api.dockerignore).
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /bin/uv
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH" \
+    HOST=0.0.0.0 PORT=8080 TORCH_DEVICE=cpu \
+    MODEL_DIR=/app/bundle/model REGISTRY_FILE=/app/bundle/registry.json
+
+# dependencies first, so a code change doesn't reinstall them (CPU PyTorch: Cloud Run has no GPU)
+COPY pyproject.toml uv.lock .python-version ./
+RUN uv sync --frozen --no-dev --extra cpu --no-install-project
+
+COPY scripts/ scripts/
+COPY frontend/ frontend/
+COPY bundle/ bundle/
+COPY outputs/ outputs/
+
+EXPOSE 8080
+CMD ["python", "-m", "frontend.server"]

@@ -91,6 +91,29 @@ def test_a_failed_upload_keeps_the_old_champion(monkeypatch, fake_run):
     fake_run.assert_not_called()  # the alias never moved
 
 
+def test_a_promotion_publishes_the_registry_for_the_deployment(monkeypatch, fake_run):
+    monkeypatch.setenv("MODEL_BUCKET", "my-bucket")
+    monkeypatch.setattr(pipeline.registry, "champion_version", lambda: "1")
+    monkeypatch.setattr(pipeline, "evaluate_version", scores({"1": OLD, "2": {"f1_macro": 0.8, "accuracy_AAPL": 0.9}}))
+    monkeypatch.setattr(pipeline.registry, "push_to_gcs", lambda version: "gs://my-bucket/v2")
+    publish = MagicMock(return_value="gs://my-bucket/registry.json")
+    monkeypatch.setattr(pipeline.registry, "publish", publish)
+    status, message = pipeline.run()
+    assert status == "promoted" and "registry published" in message
+    fake_run.assert_called_once_with("2")
+    publish.assert_called_once()
+
+
+def test_main_tells_the_workflow_the_status(monkeypatch, tmp_path):
+    out = tmp_path / "github_output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setattr(pipeline, "run", lambda do_tune=False: ("promoted", "v2 is the new champion"))
+    monkeypatch.setattr(pipeline, "notify", lambda *a: True)
+    monkeypatch.setattr(pipeline.sys, "argv", ["pipeline"])
+    pipeline.main()
+    assert out.read_text() == "status=promoted\n"
+
+
 def test_main_emails_the_traceback_when_it_crashes(monkeypatch):
     sent = MagicMock()
     monkeypatch.setattr(pipeline, "notify", sent)

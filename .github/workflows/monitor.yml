@@ -1,0 +1,87 @@
+name: monitor
+
+# Model monitoring (scripts/monitor.py, thresholds in scripts/config.py). Every day it gets the newest news from the
+# data pipeline and checks the deployed champion for data drift (PSI against the training news) and decay (macro F1 on
+# the newest labeled headlines against the held-out window). When a threshold is crossed it emails the team and starts
+# the train workflow on the newest data; train promotes only a better model, and a promotion redeploys.
+on:
+  schedule:
+    - cron: "0 13 * * *"  # daily, 13:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write  # to start the train workflow
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HAS_GCP: ${{ secrets.GCP_SA_KEY != '' && vars.MODEL_BUCKET != '' }}
+      MODEL_BUCKET: ${{ vars.MODEL_BUCKET }}
+      GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      ALERT_RECIPIENTS: ${{ secrets.RECIPIENTS }}
+
+    steps:
+      - name: Skip until Google Cloud access is set up
+        if: env.HAS_GCP != 'true'
+        run: echo "::notice::GCP_SA_KEY or MODEL_BUCKET is not set, so there is no deployed model to check."
+
+      - name: Checkout repository
+        if: env.HAS_GCP == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        if: env.HAS_GCP == 'true'
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (CPU PyTorch)
+        if: env.HAS_GCP == 'true'
+        run: uv python install && uv sync --frozen --no-dev --extra cpu
+
+      - name: Authenticate to Google Cloud
+        if: env.HAS_GCP == 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get the newest news from the data pipeline
+        if: env.HAS_GCP == 'true'
+        run: uv run dvc update data/news.parquet.dvc
+
+      - name: Get the deployed champion from the model registry
+        if: env.HAS_GCP == 'true'
+        run: uv run python -m scripts.deploy pull
+
+      - name: Check for drift and decay
+        id: monitor
+        if: env.HAS_GCP == 'true'
+        run: uv run python -m scripts.monitor
+
+      - name: Keep the report
+        if: always() && env.HAS_GCP == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-${{ github.run_id }}
+          path: outputs/monitor.json
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: env.HAS_GCP == 'true'
+        run: |
+          {
+            echo "### Model monitor: retrain=${{ steps.monitor.outputs.retrain }}"
+            echo '```json'
+            cat outputs/monitor.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Start retraining on the newest data
+        if: steps.monitor.outputs.retrain == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run train.yml --ref ${{ github.event.repository.default_branch }} -f update_data=true

@@ -1,0 +1,12 @@
+# Only for Dockerfile.api (Docker picks <Dockerfile>.dockerignore over .dockerignore). Everything is left out except
+# what the API needs: the code, the champion in bundle/ and the scored news. Never .env, data/ or mlruns/.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!scripts/
+!frontend/
+!bundle/
+!outputs/predictions.parquet
+!outputs/prices.parquet
+**/__pycache__

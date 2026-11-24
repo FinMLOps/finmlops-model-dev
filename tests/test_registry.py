@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -82,3 +83,19 @@ def test_cli_pushes_the_champion_by_default(monkeypatch, capsys):
     for bad in ([], ["pull"], ["push", "x"]):
         with pytest.raises(SystemExit):
             registry.main(bad)
+
+
+def test_publish_writes_the_champion_and_every_version(monkeypatch):
+    blob = MagicMock()
+    monkeypatch.setattr(registry, "champion_version", lambda: "2")
+    monkeypatch.setattr(registry, "versions", lambda: [{"version": 2, "champion": True}])
+    monkeypatch.setattr(registry.storage, "Client", lambda: MagicMock(bucket=lambda name: MagicMock(blob=lambda path: blob)))
+    assert registry.publish("gs://b/") == "gs://b/models/finbert-sentiment/registry.json"
+    body = json.loads(blob.upload_from_string.call_args.args[0])
+    assert body == {"champion": "2", "versions": [{"version": 2, "champion": True}]}
+
+
+def test_publish_needs_a_champion(monkeypatch):
+    monkeypatch.setattr(registry, "champion_version", lambda: None)
+    with pytest.raises(RuntimeError, match="no champion"):
+        registry.publish("b")
