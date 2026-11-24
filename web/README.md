@@ -16,8 +16,9 @@ npm run dev                                 # http://localhost:3000
 `API_URL` (see `.env.example`) points the app at the API. It's read on every request, so one build works locally
 and on Cloud Run.
 
-Every page from `frontend/static/` is ported: Home, Dashboard, News, Analyzer and Models, plus the detail drawer,
-the Ctrl/⌘ K palette, the guided tour and the loading splash. Pages have real URLs (`/dashboard?ticker=NVDA`).
+Pages: Home, Dashboard, News, Analyzer and Models, plus the detail drawer, the Ctrl/⌘ K palette, the guided tour
+and the loading splash. Pages have real URLs (`/dashboard?ticker=NVDA`). This is the only UI: `frontend/server.py`
+is just the API (opening http://localhost:8000 in a browser shows a short JSON note pointing here).
 
 ## Docker / Cloud Run
 

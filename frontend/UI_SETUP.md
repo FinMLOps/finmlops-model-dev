@@ -1,8 +1,11 @@
 # UI setup
 
-The dashboard shows the champion model's labels on the news from the data pipeline.
+The dashboard shows the champion model's labels on the news from the data pipeline. It runs as two parts:
 
-![The FinMLOps dashboard: NVDA's daily net sentiment against its closing price, the Magnificent 7 watchlist and the latest headlines](dashboard.png)
+- **the API**, `frontend/server.py` (FastAPI): runs the model and serves the data on http://localhost:8000. It has no
+  pages of its own; opening it in a browser just shows a short note.
+- **the website**, `web/` (Next.js, needs [Node.js](https://nodejs.org) 20+): the pages, on http://localhost:3000. It
+  forwards every `/api/*` request to the API.
 
 ## Quick start: the real data is in the repo
 
@@ -15,10 +18,12 @@ We pushed the two files the dashboard reads, so you can view the real-data dashb
 git clone https://github.com/FinMLOps/finmlops-model-dev.git
 cd finmlops-model-dev
 uv sync --extra cpu                          # or --extra gpu on an NVIDIA machine
-uv run python -m frontend.server             # http://localhost:8000
+uv run python -m frontend.server             # terminal 1: the API on http://localhost:8000
+cd web && npm install && npm run dev         # terminal 2: the site, open http://localhost:3000
 ```
 
-Stop the server with Ctrl+C. Change the address with `HOST` and `PORT` in `.env`.
+Stop each with Ctrl+C. Change the API's address with `HOST` and `PORT` in `.env` (and point the site at it with
+`API_URL`, see `web/.env.example`).
 
 The Dashboard and News tabs work with just these two files. The Analyzer, the Models tab and the word-by-word explanation when you open a headline run the model, so they need a champion in your local MLflow registry: see [Label the news yourself](#label-the-news-yourself).
 
@@ -44,7 +49,7 @@ uv run python -m scripts.train baseline      # registers pretrained FinBERT as t
 ```bash
 uv run python -m frontend.server score       # label every article with the champion -> outputs/predictions.parquet
 uv run python -m frontend.server prices      # daily closes from Yahoo Finance -> outputs/prices.parquet (optional)
-uv run python -m frontend.server             # http://localhost:8000
+uv run python -m frontend.server             # the API; then start the site as in the quick start
 ```
 
 ### Get newer news
@@ -65,13 +70,14 @@ A running server picks up the new files without a restart.
 - The dashboard shows the champion's labels. After a new champion is promoted, run `score` again.
 - `score` takes about 2 minutes on an Apple M4 Pro for about 24,000 articles.
 - Prices exist only for trading days, so weekends and holidays have no price.
-- The UI files are in `frontend/static/`: edit them and refresh the browser to see changes.
+- The pages are in `web/` (see `web/README.md`); `npm run dev` reloads them as you edit.
 
 ## Problems
 
 | Error | Fix |
 |---|---|
-| `No predictions yet` in the browser | `outputs/predictions.parquet` is missing: `git pull`, or `uv run python -m frontend.server score` |
+| `The API server isn't reachable` on the site | start the API (terminal 1) |
+| `No predictions yet` on the site | `outputs/predictions.parquet` is missing: `git pull`, or `uv run python -m frontend.server score` |
 | `no champion registered yet` | `uv run python -m scripts.train baseline` |
 | `news.parquet not found` | `uv run dvc pull` |
 | `dvc pull` hangs or is denied | `gcloud auth application-default login`, and ask for bucket access |
