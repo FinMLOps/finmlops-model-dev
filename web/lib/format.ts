@@ -30,3 +30,6 @@ export function weekMove(t: Ticker) {
   const ref = [...closes].reverse().find(d => d.date <= cut) ?? closes[0];
   return { close: last.close, change: (last.close / ref.close - 1) * 100 };
 }
+
+// what the model read for an article: the title and summary, joined the way news.parquet's text column is
+export const articleText = (a: { title: string; summary: string }) => (a.summary ? `${a.title}\n\n${a.summary}` : a.title);

@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 import uvicorn
 import yfinance as yf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.gzip import GZipMiddleware
 from mlflow import MlflowClient
 from pydantic import BaseModel
@@ -132,8 +132,9 @@ def summary(df):
 
 
 def article(r):
-    """one headline as JSON (r is a row from df.itertuples())"""
-    return {"id": r.id, "ticker": r.ticker, "title": r.title, "summary": text(r.summary), "text": r.text,
+    """one headline as JSON (r is a row from df.itertuples()). No "text": it is always the title and summary joined
+    by a blank line, so the site rebuilds it (articleText in web/lib/format.ts) instead of downloading it twice."""
+    return {"id": r.id, "ticker": r.ticker, "title": r.title, "summary": text(r.summary),
             "publisher": text(r.publisher), "url": text(r.url), "published": r.published.isoformat(),
             "pred": r.pred, "confidence": float(r.confidence)}
 
@@ -180,7 +181,10 @@ def build_overview(news_mtime, price_mtime):
 
 
 @app.get("/api/headlines")
-def headlines(ticker: str = "", label: str = "", q: str = "", limit: int = 50):
+def headlines(ticker: str = "", label: str = "", q: str = "", limit: int = 50,
+              articles: int = Query(0, ge=0, le=200), offset: int = Query(0, ge=0)):
+    """newest first: the first `limit` rows, or with `articles`, every row of the next that-many articles after the
+    first `offset` (an article about two companies has a row for each, and a page never splits one)"""
     df = news()
     if ticker:
         df = df[df["ticker"] == ticker]
@@ -189,7 +193,11 @@ def headlines(ticker: str = "", label: str = "", q: str = "", limit: int = 50):
     if q:
         df = df[df["title"].str.contains(q, case=False, regex=False)
                 | df["publisher"].fillna("").str.contains(q, case=False, regex=False)]
-    df = df.sort_values("published", ascending=False).head(limit)
+    df = df.sort_values("published", ascending=False)
+    if articles:
+        df = df[df["id"].isin(df["id"].drop_duplicates().iloc[offset:offset + articles])]
+    else:
+        df = df.head(limit)
     return [article(r) for r in df.itertuples()]
 
 

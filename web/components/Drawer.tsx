@@ -5,7 +5,7 @@ import { AnalysisBody, AnalysisSkeleton, type Prediction } from "@/components/An
 import { useApp } from "@/components/AppProvider";
 import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
-import { cap, when } from "@/lib/format";
+import { articleText, cap, when } from "@/lib/format";
 
 export const predict = (text: string) =>
   api<Prediction>("/api/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
@@ -23,7 +23,7 @@ export function Drawer() {
   useEffect(() => {
     if (!r) return;
     let live = true;
-    predict(r.text || r.title).then(
+    predict(articleText(r)).then(
       res => live && setResult({ key, r: res }),
       e => live && setResult({ key, error: e.message }),
     );
@@ -69,7 +69,7 @@ export function Drawer() {
             {mine?.r ? <AnalysisBody r={mine.r} /> : mine?.error ? <div className="empty error">{mine.error}</div> : <AnalysisSkeleton />}
             <div className="dr-actions">
               {r.url && <a className="btn" href={r.url} target="_blank" rel="noopener">Read the article ↗</a>}
-              <button className="btn ghost" onClick={() => { const text = r.text || r.title; closeDrawer(); router.push(`/analyzer?text=${encodeURIComponent(text)}`); }}>Open in Analyzer</button>
+              <button className="btn ghost" onClick={() => { const text = articleText(r); closeDrawer(); router.push(`/analyzer?text=${encodeURIComponent(text)}`); }}>Open in Analyzer</button>
             </div>
           </div>}
         </div>

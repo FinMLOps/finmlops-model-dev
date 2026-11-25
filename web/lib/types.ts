@@ -3,7 +3,7 @@ export type Label = "positive" | "neutral" | "negative";
 export type Counts = { articles: number; positive: number; neutral: number; negative: number; net: number };
 
 export type Article = {
-  id: string; ticker: string; title: string; summary: string; text: string;
+  id: string; ticker: string; title: string; summary: string;
   publisher: string; url: string; published: string; pred: Label; confidence: number;
 };
 
