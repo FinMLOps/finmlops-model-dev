@@ -1,5 +1,5 @@
 "use client";
-import { useChartColors, alpha } from "@/lib/chart";
+import { alpha, useSentimentColors } from "@/lib/theme";
 import { cap, LABELS, signed, tone } from "@/lib/format";
 import type { Label } from "@/lib/types";
 
@@ -16,8 +16,7 @@ export function AnalysisSkeleton() {
 
 // probabilities, highlighted words and top drivers for a /api/predict result (Analyzer and the detail drawer)
 export function AnalysisBody({ r }: { r: Prediction }) {
-  const { C } = useChartColors();
-  const pos = C?.positive ?? "#22b07d", neg = C?.negative ?? "#ef4f58";
+  const { positive: pos, negative: neg } = useSentimentColors();
   const max = Math.max(1e-6, ...r.words.map(w => Math.abs(w.impact)));
   const ranked = [...r.words].sort((a, b) => b.impact - a.impact);
   const list = (items: typeof r.words) => items.length

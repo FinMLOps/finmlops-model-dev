@@ -1,17 +1,20 @@
 "use client";
-import { Chart, registerables, type Plugin } from "chart.js";
+import {
+  BarController, BarElement, CategoryScale, Chart, Filler, Legend, LinearScale, LineController, LineElement, PointElement,
+  Tooltip, type Plugin,
+} from "chart.js";
 import { useEffect, useState } from "react";
+import { alpha } from "./theme";
 
-Chart.register(...registerables);
+// only the parts our three charts use (daily sentiment line, volume bars, accuracy bars), not all of Chart.js
+Chart.register(LineController, LineElement, PointElement, BarController, BarElement, CategoryScale, LinearScale,
+  Filler, Tooltip, Legend);
+
+export { alpha };
 
 export type Colors = Record<"positive" | "neutral" | "negative" | "accent" | "price" | "grid" | "muted" | "faint" | "text" | "panel" | "border2" | "tooltip", string>;
 
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
-export function alpha(hex: string, a: number) {
-  const n = parseInt(hex.replace("#", ""), 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
 
 // read the theme's colours and point Chart.js's defaults at them
 function readColors(): Colors {
@@ -26,7 +29,9 @@ function readColors(): Colors {
   Chart.defaults.font.family = css("--sans");
   Chart.defaults.font.size = 11;
   Chart.defaults.maintainAspectRatio = false;
-  Chart.defaults.animation = { duration: reduced ? 0 : 550, easing: "easeOutQuart" };
+  // update in place: Chart.js reads the option names (type, fn, …) from this object, so replacing it breaks colour
+  // animations ("this._fn is not a function" when the High/Low point colours move after switching stocks)
+  Object.assign(Chart.defaults.animation, { duration: reduced ? 0 : 550, easing: "easeOutQuart" });
   Object.assign(Chart.defaults.plugins.legend.labels, { boxWidth: 8, boxHeight: 8, usePointStyle: true, padding: 14 });
   Object.assign(Chart.defaults.plugins.tooltip, {
     backgroundColor: C.tooltip, borderColor: C.border2, borderWidth: 1, titleColor: C.text, bodyColor: C.muted,
